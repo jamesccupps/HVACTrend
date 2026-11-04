@@ -1,0 +1,36 @@
+name: Points not recognised
+description: The dashboard or the alarm rules don't know what some of your points are
+labels: [point-names]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        HVACTrend works out what each point is (discharge air, its setpoint, fan speed, a valve…)
+        from its BACnet object name and description. Every building names them differently, so
+        examples from real controllers are the most useful thing you can send.
+
+        Replace anything that identifies your building; keep the shape of the names.
+  - type: textarea
+    id: names
+    attributes:
+      label: The point names
+      description: As they appear on the Point Selection page, one per line, with what each one really is.
+      placeholder: |
+        AHU1.SA.T          -> discharge air temperature
+        AHU1.SA.T.SP       -> its setpoint
+        AHU1.SF.VFD.OUT    -> supply fan speed, %
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: controllers
+    attributes:
+      label: Controllers
+      placeholder: "e.g. Trane Tracer SC+, Siemens PXC, JCI NAE, Distech ECY"
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where it shows
+      description: The dashboard tile that's empty, the rule that can't be judged on Point Coverage, …

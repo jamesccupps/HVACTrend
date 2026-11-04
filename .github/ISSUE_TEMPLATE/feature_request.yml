@@ -1,0 +1,21 @@
+name: Idea or feature request
+description: Something HVACTrend could do, or do better
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        HVACTrend stays **read-only**: it will never write to a controller, so ideas that need a
+        write (resetting an alarm, releasing an override) are out of scope. Everything else is
+        welcome.
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What would it help with?
+      description: The equipment or the problem, and what you do today instead.

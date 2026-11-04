@@ -178,6 +178,21 @@ def build() -> Path:
     return cfg
 
 
+def found() -> list[str]:
+    """What the alarm rules found in the demo week, one line each. On a real system these go
+    to the phone; the demo has no notification topic, so it prints them instead."""
+    import sqlite3
+    db = DEMO / "demo.db"
+    if not db.exists():
+        return []
+    c = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+    try:
+        rows = c.execute("SELECT status, detail FROM incidents ORDER BY started_utc").fetchall()
+    finally:
+        c.close()
+    return [f"  {'OPEN  ' if s == 'open' else 'closed'}  {d}" for s, d in rows]
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Run HVACTrend on a made-up building.")
     p.add_argument("--rebuild", action="store_true", help="regenerate the demo week")
@@ -191,6 +206,10 @@ def main() -> int:
     os.environ["HVACTREND_CONFIG"] = str(cfg)
     os.environ["HVACTREND_NO_BACNET"] = "1"
     os.environ["HVACTREND_SECRETS"] = str(DEMO / "secrets.env")   # never your real secrets
+    lines = found()
+    if lines:
+        print("What the alarm rules found this week (a real system sends these to your phone):")
+        print("\n".join(lines))
     print(f"HVACTrend demo: http://localhost:{args.port}   (Ctrl+C to stop)")
     import uvicorn
     uvicorn.run("hvactrend.api.app:create_app", factory=True, host="127.0.0.1", port=args.port)

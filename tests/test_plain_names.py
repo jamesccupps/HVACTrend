@@ -30,3 +30,6 @@ def test_the_demo_building_has_a_week_the_rules_can_judge(tmp_path, monkeypatch)
     units = {u for (u,) in c.execute("SELECT system_code FROM incidents")}
     assert units == {"AHU-2"}                     # only the unit that runs warm
     assert "demo.db" in cfg.read_text(encoding="utf-8")
+    c.close()
+    lines = demo.found()                          # printed at start-up, in place of the phone
+    assert lines and all("AHU-2: discharge air" in l for l in lines)

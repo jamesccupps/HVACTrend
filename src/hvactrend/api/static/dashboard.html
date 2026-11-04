@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HVACTrend — Unit Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d1117'/><polyline points='5,22 11,14 16,18 22,8 27,12' fill='none' stroke='%233fd07f' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
   :root {
     --bg:#0b0e13; --panel:#131922; --panel2:#0f141c; --line:#243044;
@@ -177,7 +178,7 @@ let cur=null, NOW=0, timer=null;
 
 // operator-chosen fleet columns, persisted per browser (like the viewer's saved views).
 // null = use the server's default set.
-const COLKEY='occhv_dash_cols';
+const COLKEY='hvactrend_dash_cols';
 function chosenCols(){ try{ const v=JSON.parse(localStorage.getItem(COLKEY)); return Array.isArray(v)&&v.length?v:null; }catch(e){ return null; } }
 function setChosenCols(arr){ if(arr&&arr.length) localStorage.setItem(COLKEY, JSON.stringify(arr)); else localStorage.removeItem(COLKEY); }
 // compact column headers for the matrix (narrow), else fall back to the full role label

@@ -1,5 +1,10 @@
 # HVACTrend
 
+[![Latest release](https://img.shields.io/github/v/release/jamesccupps/HVACTrend?label=release)](https://github.com/jamesccupps/HVACTrend/releases/latest)
+[![CI](https://github.com/jamesccupps/HVACTrend/actions/workflows/ci.yml/badge.svg)](https://github.com/jamesccupps/HVACTrend/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/downloads/)
+
 **A read-only BACnet/IP trend logger, web viewer and alarm system for building HVAC.**
 
 HVACTrend sits on your building's BACnet network and records the points you choose every two
@@ -8,6 +13,14 @@ for as long as you like, and shows it in a fast trend viewer you open in a brows
 for equipment that is not doing what it is told (discharge air off setpoint, duct static low, a
 boiler enabled but not heating, a controller's own alarms) and sends those to your phone. And it
 never writes to a controller: it cannot change anything in your building.
+
+**[⬇ Download the latest release](https://github.com/jamesccupps/HVACTrend/releases/latest)**
+(Windows or Linux, Python 3.11+) · [Try the demo](#try-it-in-a-minute-without-a-bacnet-network) ·
+[Getting started](docs/getting-started.md) · [All releases](https://github.com/jamesccupps/HVACTrend/releases)
+
+![The trend viewer: two and a half days of discharge air on two air handlers, with the setpoint and the outdoor air. AHU-2 runs about 9 °F warm every afternoon while AHU-1 holds its 55 °F setpoint.](docs/screenshots/trend-viewer.png)
+
+<sub>The demo building (`scripts/demo.py`): made-up data.</sub>
 
 It was built for a real building, an office tower with Trane, Siemens and JCI controls, and runs
 there around the clock. It is written to work in any building with BACnet/IP.
@@ -41,6 +54,10 @@ there around the clock. It is written to work in any building with BACnet/IP.
   alarm rules found, written by Claude. It explains the alarms; it does not invent new ones.
   Off by default, and it needs your own API key.
 
+| The unit dashboard | One unit |
+|---|---|
+| ![Every unit on one screen: discharge, mixed and return air, fan speed, outdoor air damper and duct static, with an override badge on AHU-3](docs/screenshots/dashboard.png) | ![AHU-2's readings grouped by kind, each with a sparkline](docs/screenshots/unit.png) |
+
 ## Safe by design
 
 - **Read-only BACnet.**
@@ -69,7 +86,8 @@ python -m venv .venv
 ```
 
 Open <http://localhost:8001>. It's a made-up building with a week of readings, one unit that
-runs warm in the afternoons, and an operator override. Nothing is sent anywhere.
+runs warm in the afternoons, and an operator override. The demo prints what the alarm rules
+found (a real system sends those to your phone). Nothing is sent anywhere.
 
 ## Install it for your building
 
@@ -79,7 +97,7 @@ runs warm in the afternoons, and an operator override. Nothing is sent anywhere.
 1. Double-click `install.bat`. It creates a private Python environment, installs HVACTrend
    and runs the setup wizard. The wizard asks for the building name, which network card is
    on the BACnet network, and who may open the pages.
-2. Find your controllers: `.venv\Scripts\python scripts\discover.py --devices-only`.
+2. Find your controllers: `.venv\Scripts\python scripts\discover.py --identify`.
 3. Tell HVACTrend which controller runs which unit (the `equipment` section of
    `config\config.yaml`), then run `.venv\Scripts\python scripts\commission.py`.
 4. Double-click `start.bat` and choose what to log on the **Point Selection** page.

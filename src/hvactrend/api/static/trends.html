@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HVACTrend — Trend Viewer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d1117'/><polyline points='5,22 11,14 16,18 22,8 27,12' fill='none' stroke='%233fd07f' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
   /* ═══════════════════════════════════════════════════════════════════════════
      HVACTrend — trend viewer
@@ -745,7 +746,7 @@ const $ = s => document.querySelector(s);
 const PALETTE = ['#4aa8ff','#39d353','#f0b429','#ff5f56','#c084fc','#2dd4bf',
                  '#fb923c','#f472b6','#a3e635','#60a5fa','#facc15','#34d399'];
 const HOUR = 3600;
-const LS_LAST = 'occhv_trends_last', LS_VIEWS = 'occhv_trends_views';
+const LS_LAST = 'hvactrend_trends_last', LS_VIEWS = 'hvactrend_trends_views';
 
 // role code -> operator-friendly label + a preferred display order (by-metric mode)
 const ROLE_LABEL = {
@@ -3234,6 +3235,9 @@ function fmtTick(t, span){
   const d=new Date(t*1000); const p=n=>String(n).padStart(2,'0');
   if(span<2*HOUR) return `${p(d.getHours())}:${p(d.getMinutes())}`;
   if(span<2*86400) return `${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  // Wider spans: the date at midnight. Two to four days tick every 12 h, and giving the noon
+  // tick the date as well printed every day twice ("11/03  11/03"); it gets its time instead.
+  if(d.getHours() || d.getMinutes()) return `${p(d.getHours())}:${p(d.getMinutes())}`;
   return `${p(d.getMonth()+1)}/${p(d.getDate())}`;
 }
 function fmtNum(v){

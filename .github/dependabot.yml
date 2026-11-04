@@ -1,0 +1,13 @@
+# Actions are pinned by commit SHA (tags are mutable). A pinned SHA goes stale silently, so
+# Dependabot keeps them current; it updates the SHA and its `# v7` comment together.
+#
+# Python dependencies are not watched here on purpose: bacpypes3 is pinned exactly and is
+# bumped only after re-verifying the read-only guard against it (CONTRIBUTING.md).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "CI"

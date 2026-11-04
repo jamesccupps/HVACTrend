@@ -549,6 +549,16 @@ test('DST · last week\u2019s ghost lines up by the clock, not by 604,800 s', ()
   assert.equal(cmpShift(1000, 3600), 4600, 'a non-day offset is plain seconds');
 });
 
+test('a 2-4 day window labels its noon ticks with the time, not the date again', () => {
+  const { fmtTick, timeTicks } = compile(['fmtTick', 'timeTicks', '_advanceLocal'], { HOUR: 3600 });
+  const a = local(2026, 11, 2, 4), b = local(2026, 11, 4, 14);
+  const labels = timeTicks(a, b).map(t => fmtTick(t, b - a));
+  assert.deepEqual(labels, ['12:00', '11/03', '12:00', '11/04', '12:00']);
+  assert.equal(fmtTick(local(2026, 11, 3, 12), 7 * 86400), '12:00');
+  assert.equal(fmtTick(local(2026, 11, 3), 7 * 86400), '11/03');
+  assert.equal(fmtTick(local(2026, 11, 3, 12), 86400), '11/03 12:00', 'a day keeps date and time');
+});
+
 test('the legend ages an hourly bucket from its end, not its start', () => {
   const { lastLbl } = compile(['lastLbl'], { fmtNum: v => String(v) });
   const now = Math.floor(Date.now() / 1000);

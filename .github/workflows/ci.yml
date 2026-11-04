@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: nothing here pushes or publishes.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is where it runs in production; Linux is supported (systemd units in
+        # deploy/). The suite needs no BACnet hardware and no network.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      # Pinned by commit SHA, not tag: tags are mutable. Dependabot keeps them current.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false   # nothing here pushes; keep the token out of .git/config
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Syntax check
+        run: python -m compileall -q src scripts
+
+      # The viewer's JavaScript tests run inside pytest (tests/test_viewer_js.py) on the
+      # runner's own Node; printed so the log shows they ran rather than skipped.
+      - name: Node version
+        run: node --version
+
+      - name: Run tests
+        # -rs lists every skipped test with its reason.
+        run: python -m pytest -q -rs
+
+      - name: The example config is safe as shipped
+        # The wizard's no-questions mode, on the shipped template: proves the template still
+        # has every line the wizard fills in.
+        shell: bash
+        run: |
+          python scripts/configure.py --defaults --ip 192.0.2.10 --instance 3999001
+          python -c "import yaml; c = yaml.safe_load(open('config/config.yaml', encoding='utf-8')); assert c['api']['host'] == '127.0.0.1'; assert c['bacnet']['safety']['allow_writes'] is False; print('ok')"
+
+  build:
+    name: Build sdist and wheel
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: The wheel carries the web pages
+        run: python -c "import zipfile, glob; n = zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist(); assert any(p.endswith('static/trends.html') for p in n), n; print('ok')"

@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in HVACTrend doesn't work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time!
+
+        **Please don't paste** `config/secrets.env`, your ntfy topic or an API key. Replace any
+        addresses, device instances or building names you'd rather not post.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen, if you know
+      placeholder: |
+        1. Open the trend viewer
+        2. Pick AHU-1's discharge air and its setpoint
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release, or the commit (`git log -1 --oneline`)
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Running on
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - The demo (scripts/demo.py)
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Logging (BACnet polling, discovery)
+        - Trend viewer
+        - Dashboard / Point Selection / Point Coverage
+        - Alarm rules
+        - Phone notifications (ntfy) or the watchdog
+        - Backups and snapshots
+        - AI summary
+        - Install or setup
+        - Something else
+  - type: input
+    id: controllers
+    attributes:
+      label: Controllers, if it's about BACnet
+      placeholder: "e.g. Trane Tracer SC+, Siemens PXC, JCI NAE"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log lines
+      description: The relevant lines of `logs/hvactrend.log` (or the browser's console, for a page).
+      render: text
