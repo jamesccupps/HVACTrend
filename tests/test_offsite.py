@@ -151,11 +151,15 @@ def test_the_copy_waits_while_a_backup_is_being_written(tmp_path):
     try:
         async def go():
             col._maybe_offsite_copy()
+        before = time.monotonic()
         asyncio.run(go())
+        after = time.monotonic()
         assert col._offsite_task is None
     finally:
         _BACKUP_LOCK.release()
-    assert 0 < col._next_offsite_check - time.monotonic() <= 300, "look again within minutes"
+    # Bracketed by readings on both sides: on Windows' coarse clock the test read the same
+    # tick the code did, and "next - now <= 300" came out 300.0000000001 (CI, 2026-11-04).
+    assert before < col._next_offsite_check <= after + 300, "look again within minutes"
 
 
 def test_a_failed_copy_backs_off_for_hours(tmp_path, monkeypatch):

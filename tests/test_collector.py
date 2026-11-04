@@ -584,10 +584,14 @@ def test_a_copy_still_running_blocks_a_second_backup(tmp_path):
     assert _BACKUP_LOCK.acquire(blocking=False), "lock unexpectedly held by another test"
     try:                                   # a PREVIOUS instance's thread is mid-copy
         col = Collector(app=None, dal=_Dal(), config=cfg)
+        before = time.monotonic()
         asyncio.run(col._maybe_backup_db())
+        after = time.monotonic()
         assert col._dbbackup_task is None, "started a second copy while one was running"
         assert not bdir.exists() or not list(bdir.glob("hvactrend.*.db"))
-        assert 0 < col._next_dbbackup_check - time.monotonic() <= 300, \
+        # bracketed, not "next - now <= 300": on Windows' coarse clock that compared two
+        # readings of the same tick and failed by a float ulp (test_offsite, CI 2026-11-04)
+        assert before < col._next_dbbackup_check <= after + 300, \
             "while blocked it should look again within minutes"
     finally:
         _BACKUP_LOCK.release()
