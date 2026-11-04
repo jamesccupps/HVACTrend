@@ -48,6 +48,9 @@ there around the clock. It is written to work in any building with BACnet/IP.
   - Notifications go through [ntfy](https://ntfy.sh): free, no account.
 - **Point coverage.** It shows which alarm rules each unit can be judged by, and which points
   you would need to log for the rest.
+- **Rescan a controller after a programming change.** One button on Point Selection: new
+  points appear on their unit's list, renamed ones keep their history, and logging carries on
+  while it reads.
 - **Backups.** A verified copy of the database every week, optionally to a synced folder off
   the computer, and a daily copy of your configuration.
 - **An AI summary, if you want one.** A daily and weekly plain-language summary of what the

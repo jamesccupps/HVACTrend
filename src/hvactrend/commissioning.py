@@ -2,8 +2,8 @@
 
 Discovery finds devices and their objects; it cannot know that a controller runs "AHU-3" or
 that half of a plant controller's points are the cooling tower and half the pumps. The
-`equipment` section says so, and scripts/commission.py applies it. Three ways, first match
-wins for each point:
+`equipment` section says so, and scripts/commission.py and the Point Selection page's
+rescan (rescan.py) apply it. Three ways, first match wins for each point:
 
     equipment:
       point_systems:                 # by object-name glob, within one device

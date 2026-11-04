@@ -64,6 +64,19 @@
   .notestrip { padding:6px 16px; background:#12233a; color:var(--dim); font-size:12px;
     border-bottom:1px solid var(--line); }
   .notestrip b { color:var(--accent2); }
+  .rescan { padding:10px 16px; background:#101a28; border-bottom:1px solid var(--line); font-size:13px; }
+  .rescan .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .rescan select { background:var(--bg); border:1px solid var(--line); color:var(--fg);
+    padding:5px 8px; border-radius:4px; font:inherit; max-width:100%; }
+  .rescan .about { color:var(--dim); font-size:12px; margin-top:6px; }
+  .rescan .res { margin-top:8px; }
+  .rescan .res p { margin:4px 0; }
+  .rescan .res details { margin:2px 0 2px 14px; color:var(--dim); font-size:12px; }
+  .rescan .res summary { cursor:pointer; color:var(--fg); }
+  .rescan .res ul { margin:4px 0; padding-left:18px; }
+  .rescan .warn { color:var(--amber); }
+  .rescan .bad { color:var(--fault); }
+  .rescan .ok { color:var(--accent); }
 </style>
 </head>
 <body>
@@ -85,7 +98,21 @@
       <label><input type="checkbox" id="loggable"> loggable only</label>
       <button id="readVisible" class="primary">▶ Read visible values</button>
       <button id="rebuild" title="Re-classify point roles, so newly enabled points reach the alarm rules, the unit dashboard and the by-metric list">⟳ Rebuild model</button>
+      <button id="rescanBtn" title="Read a controller's point list again, after a programming change">⟲ Rescan controller</button>
       <span class="hint" id="tblHint"></span>
+    </div>
+    <div class="rescan" id="rescanPanel" hidden>
+      <div class="row">
+        <label for="rsDev">Controller</label>
+        <select id="rsDev"><option>loading…</option></select>
+        <button id="rsGo" class="primary">Rescan</button>
+        <button id="rsClose" title="close">&#10005;</button>
+        <span class="hint" id="rsState"></span>
+      </div>
+      <div class="about">Reads the controller's point list again, on this server's own BACnet connection
+        (reads only; logging carries on). New points appear on their unit's list, unticked; names are
+        refreshed. Nothing is unticked, moved to another unit or deleted.</div>
+      <div class="res" id="rsResult"></div>
     </div>
     <div class="notestrip" id="rebuildMsg">Changed which points log? Newly enabled points chart immediately, but the alarm
       rules, the unit dashboard and the by-metric list only see them after a model rebuild (daily, or click <b>⟳ Rebuild model</b>).</div>
@@ -138,8 +165,10 @@ async function j(url, opts) {
 function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
 function esc(s){ return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+let sysList = [];
 async function loadSystems() {
   const {systems} = await j('/api/systems');
+  sysList = systems;
   // /health now answers 503 while collection is not running. The shared j() helper
   // throws on any non-2xx (and raises the auth-token bar on a 503), so read the body
   // directly: a degraded recorder must SHOW as degraded, not blank the page.
@@ -246,11 +275,121 @@ $('#rebuild').onclick = async () => {
   b.disabled=true; b.textContent='⟳ Rebuilding… (a few seconds)';
   try {
     const r = await post('/api/model/rebuild', {});
-    msg.innerHTML = `Model rebuilt: <b>${r.roles.classified}</b> points classified, `
-      + `<b>${r.baselines.points}</b> baseline bands, <b>${r.baselines.corrs}</b> correlations.`;
+    // baselines is null while ai.baselines is off (the default): reading .points off it
+    // threw, and a rebuild that had worked was reported as "Rebuild failed".
+    msg.innerHTML = `Model rebuilt: <b>${r.roles.classified}</b> points classified`
+      + (r.baselines ? `, <b>${r.baselines.points}</b> baseline bands, <b>${r.baselines.corrs}</b> correlations.` : '.');
   } catch(e){ msg.textContent='Rebuild failed: '+e.message; }
   finally { b.disabled=false; b.textContent=old; }
 };
+// ── rescan a controller (rescan.py) ─────────────────────────────────────────
+// Runs on the server as a background job; this page starts it, polls it once a second and
+// reloads the unit list when it is done. Another tab's rescan is picked up on load.
+let rsTimer = null;
+function markActive(){ const el=document.querySelector(`.sys[data-id="${curSys}"]`); if(el) el.classList.add('active'); }
+function rsLabel(c){
+  return `${c.units.length ? c.units.join(', ') : 'no unit yet'} — ${c.name || 'controller'} (${c.device_instance})`;
+}
+async function rsOpen(){
+  $('#rescanPanel').hidden = false;
+  try {
+    const d = await j('/api/rescan/controllers');
+    const want = (sysList.find(s=>s.id===curSys)||{}).code;  // the unit on screen
+    $('#rsDev').innerHTML = d.controllers.map(c =>
+      `<option value="${c.device_instance}">${esc(rsLabel(c))}</option>`).join('');
+    const pick = d.controllers.find(c => want && c.units.includes(want));
+    if(pick) $('#rsDev').value = pick.device_instance;
+    $('#rsGo').disabled = !d.bacnet;
+    $('#rsState').textContent = d.bacnet ? '' : 'BACnet is offline (browse-only mode); a rescan needs it.';
+  } catch(e){ $('#rsState').textContent = 'Could not list the controllers: '+e.message; }
+}
+async function rsStart(){
+  const dev = parseInt($('#rsDev').value);
+  if(!Number.isFinite(dev)) return;
+  $('#rsResult').innerHTML = '';
+  try { rsShow(await post(`/api/rescan?device=${dev}`, {})); }
+  catch(e){ $('#rsState').textContent = 'Could not start: '+e.message; return; }
+  rsTimer = setTimeout(rsPoll, 1000);
+}
+async function rsPoll(){
+  clearTimeout(rsTimer);
+  let st;
+  try { st = await j('/api/rescan'); }
+  catch(e){ rsTimer = setTimeout(rsPoll, 3000); return; }
+  rsShow(st);
+  if(st.state === 'running') rsTimer = setTimeout(rsPoll, 1000);
+  else if(st.state === 'done') loadSystems().then(()=>{ markActive(); return loadPoints(); }).catch(()=>{});
+}
+function rsShow(st){
+  const busy = st.state === 'running';
+  $('#rsGo').disabled = busy; $('#rsDev').disabled = busy;
+  if(busy){
+    $('#rsState').textContent = st.total == null
+      ? `Reading controller ${st.device}'s object list…`
+      : `Reading controller ${st.device}: ${st.done.toLocaleString()} of ${st.total.toLocaleString()} objects…`;
+  } else if(st.state === 'error'){
+    $('#rsState').innerHTML = `<span class="bad">${esc(st.error)}</span>`;
+  } else if(st.state === 'done'){
+    $('#rsState').textContent = '';
+    $('#rsResult').innerHTML = rsResultHtml(st.result);
+  }
+}
+function rsList(title, items, fmt, open){
+  if(!items.length) return '';
+  return `<details${open?' open':''}><summary>${title}</summary><ul>`
+    + items.map(i=>`<li>${fmt(i)}</li>`).join('') + '</ul></details>';
+}
+function rsShown(count, items){ return count > items.length ? ` (the first ${items.length})` : ''; }
+function rsResultHtml(r){
+  const unit = s => s ? esc(s) : '<span class="warn">no unit</span>';
+  const s = n => n!=1 ? 's' : '';
+  let h = `<p><b>${esc(r.name || ('controller '+r.device))}</b> (${r.device}`
+    + (r.address_changed ? `, now at ${esc(r.address)}` : '') + `): `
+    + `${r.objects.toLocaleString()} objects read in ${r.seconds} s`
+    + (r.complete ? ', the whole list.'
+       : `. <span class="warn">Its list could not be confirmed complete`
+         + (r.declared!=null ? ` (${r.objects} of ${r.declared})` : '')
+         + ', so nothing is reported as gone.</span>') + '</p>';
+  if(!r.new_count && !r.renamed_count && !r.gone_count && !r.placed_count)
+    h += '<p class="ok">No changes: every point it has was already here, under the same name.</p>';
+  if(r.new_count){
+    const by = {}; r.new.forEach(n => { by[n.system||''] = (by[n.system||'']||0) + 1; });
+    h += `<p><b class="ok">${r.new_count} new point${s(r.new_count)}</b>: `
+      + Object.entries(by).map(([k,v]) => `${unit(k)} ${v}`).join(' · ') + '. Tick the ones to log.</p>'
+      + rsList('which'+rsShown(r.new_count, r.new), r.new, n =>
+          `${esc(n.name||'(unnamed)')} <span class="type">${esc(n.object_type)} ${n.object_instance}</span> → ${unit(n.system)}`,
+          r.new_count <= 20);
+    if(r.new.some(n => !n.system))
+      h += '<p class="about">A point with no unit is in the inventory but on no unit\'s list. To place it, '
+        + 'give it a rule under <b>equipment.point_systems</b> in config/config.yaml, restart the server, and rescan.</p>';
+  }
+  if(r.placed_count)
+    h += `<p>${r.placed_count} point${s(r.placed_count)} already known, now on a unit's list by an equipment rule.</p>`
+      + rsList('which'+rsShown(r.placed_count, r.placed), r.placed, p => `${esc(p.name||'')} → ${unit(p.system)}`);
+  if(r.renamed_count)
+    h += `<p>${r.renamed_count} renamed; logging and history kept.</p>`
+      + rsList('which'+rsShown(r.renamed_count, r.renamed), r.renamed, i =>
+          `${esc(i.old)} → <b>${esc(i.new)}</b> <span class="type">${unit(i.system)}</span>`
+          + (i.logged ? ' <span class="ok">logged</span>' : ''));
+  if(r.gone_count)
+    h += `<p class="warn">${r.gone_count} point${s(r.gone_count)} no longer on the controller`
+      + (r.gone_logged ? `, ${r.gone_logged} still ticked to log: untick ${r.gone_logged>1?'them':'it'}` : '')
+      + `. ${r.gone_count!=1 ? 'They stay' : 'It stays'} in the inventory.</p>`
+      + rsList('which'+rsShown(r.gone_count, r.gone), r.gone, g =>
+          `${esc(g.name||'(unnamed)')} <span class="type">${unit(g.system)}</span>`
+          + (g.logged ? ' <span class="bad">logged</span>' : ''), r.gone_logged > 0);
+  if(r.other_new)
+    h += `<p class="about">Also ${r.other_new} new object${s(r.other_new)} that ${r.other_new!=1?'are':'is'} not a point `
+      + '(trend logs, programs, files): kept in the inventory, on no unit&rsquo;s list.</p>';
+  if(r.roles_classified != null)
+    h += `<p class="about">Point roles re-classified (${r.roles_classified} points), so the dashboard and the alarm rules see the changes.</p>`;
+  return h;
+}
+$('#rescanBtn').onclick = () => { if($('#rescanPanel').hidden) rsOpen(); else $('#rescanPanel').hidden = true; };
+$('#rsClose').onclick = () => { $('#rescanPanel').hidden = true; };
+$('#rsGo').onclick = rsStart;
+j('/api/rescan').then(st => { if(st.state === 'running'){ rsOpen(); rsPoll(); } }).catch(()=>{});
+
 let deb; $('#search').oninput = () => { clearTimeout(deb); deb=setTimeout(loadPoints,250); };
 $('#loggable').onchange = loadPoints;
 

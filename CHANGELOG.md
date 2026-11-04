@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.1.0 — first public release
+## Unreleased
+
+- **Rescan a controller from Point Selection** (⟲ Rescan controller). Reads one controller's
+  object list again on the server's own BACnet connection, so nothing is stopped.
+  - New points go on their unit's list, unticked, placed by the equipment map.
+  - Renamed points keep their logging and history.
+  - Points with a unit are never moved, and nothing is deleted. Points the controller no
+    longer has are listed, but only after a complete read of its object list.
+  - A controller whose address changed is found again by Who-Is.
+  - [docs/commissioning.md](docs/commissioning.md#after-a-programming-change-rescan-a-controller).
+- **Fixed:** ⟳ Rebuild model said "Rebuild failed" after every successful rebuild while the
+  statistical baselines are off (the default).
+- Every page's script is now checked to parse, in the test suite.
 
 HVACTrend has run in one building since July 2026; this is its first release for others.
 

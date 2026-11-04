@@ -148,7 +148,9 @@ async def enumerate_device(app: ReadOnlyBACnetApplication, device: DiscoveredDev
 async def enumerate_device_fast(app: ReadOnlyBACnetApplication, device: DiscoveredDevice,
                                 *, props: Optional[list[str]] = None,
                                 batch_size: int = 10,
-                                inter_read_delay: float = 0.02) -> list[DiscoveredObject]:
+                                inter_read_delay: float = 0.02,
+                                stats: Optional[dict] = None,
+                                on_progress: Optional[Any] = None) -> list[DiscoveredObject]:
     """Enumerate a LARGE controller via batched ReadPropertyMultiple.
 
     For bulk inventory caching of big Trane SCs (thousands of objects) where the
@@ -157,11 +159,16 @@ async def enumerate_device_fast(app: ReadOnlyBACnetApplication, device: Discover
     are read later per §9.1) for many objects per request, cutting a 5,500-object
     SC from thousands of requests to a few hundred. Any batch the device rejects
     (APDU size / no-RPM) falls back to per-object reads, so nothing is lost.
+
+    `stats` (a dict, filled in) says whether the object list was read in full -- see
+    _read_object_list. `on_progress(done, total)` is called after every batch.
     """
     props = list(props) if props else ["object-name", "units", "description"]
     dev_oid = f"device,{device.device_instance}"
     await _enrich_device(app, device, dev_oid)
-    oids = await _read_object_list(app, device.address, dev_oid)
+    oids = await _read_object_list(app, device.address, dev_oid, stats=stats)
+    if on_progress:
+        on_progress(0, len(oids))
 
     results: list[DiscoveredObject] = []
     for start in range(0, len(oids), batch_size):
@@ -195,6 +202,8 @@ async def enumerate_device_fast(app: ReadOnlyBACnetApplication, device: Discover
                 if obj is not None:
                     results.append(obj)
 
+        if on_progress:
+            on_progress(min(start + batch_size, len(oids)), len(oids))
         if inter_read_delay:
             await asyncio.sleep(inter_read_delay)   # site-safe pacing between batches
     return results
@@ -233,8 +242,13 @@ async def _enrich_device(app: ReadOnlyBACnetApplication, device: DiscoveredDevic
 
 
 async def _read_object_list(app: ReadOnlyBACnetApplication, address: Any,
-                            dev_oid: str) -> list[Any]:
+                            dev_oid: str, *, stats: Optional[dict] = None) -> list[Any]:
     """Read object-list, falling back to indexed element reads for big controllers.
+
+    `stats`, when given, is filled with `declared` (the device's own count, None when it
+    would not say), `listed` (how many were read) and `complete` -- True only when the
+    count was readable and every element came back. A rescan reports points as gone from
+    a controller ONLY on a complete list: a short read must never look like deletions.
 
     Some controllers — especially a device behind an MS/TP router (small APDU) —
     return a *truncated but non-error* whole-array object-list: the tail of the list
@@ -245,6 +259,8 @@ async def _read_object_list(app: ReadOnlyBACnetApplication, address: Any,
     response). Index reads are also the path for big controllers whose full array
     can't fit one response at all.
     """
+    st = stats if stats is not None else {}
+    st.update(declared=None, listed=0, complete=False)
     # Declared length first (single-element read; cheap). Lets us detect a truncated
     # whole-array response instead of trusting a short-but-valid-looking list.
     declared: Optional[int] = None
@@ -255,6 +271,7 @@ async def _read_object_list(app: ReadOnlyBACnetApplication, address: Any,
             declared = int(cnt)
     except Exception as exc:
         logger.debug("object-list count read failed on %s: %s", dev_oid, exc)
+    st["declared"] = declared
 
     # Whole-array read (fast path for well-behaved devices).
     try:
@@ -269,6 +286,8 @@ async def _read_object_list(app: ReadOnlyBACnetApplication, address: Any,
     if objlist is not None and not _is_error(objlist):
         got = list(objlist)
         if declared is None or len(got) >= declared:
+            # complete only when the device said how many: an uncounted list may be short
+            st.update(listed=len(got), complete=declared is not None)
             return got
         logger.warning("object-list on %s returned %d of %d declared objects; "
                        "re-reading by index (truncated/segment-limited response)",
@@ -305,6 +324,7 @@ async def _read_object_list(app: ReadOnlyBACnetApplication, address: Any,
                 missed.append(i)
                 continue
             oids.append(oid)
+        st.update(declared=count, listed=len(oids), complete=not missed)
         if missed:
             # Loud, WITH NUMBERS, at the one place that knows both what the device
             # advertises and what was actually read. Before this, a partial inventory was
@@ -315,6 +335,7 @@ async def _read_object_list(app: ReadOnlyBACnetApplication, address: Any,
                          "%d element(s) unreadable (first: %s). Re-run discovery for this "
                          "device.", dev_oid, len(oids), count, len(missed), missed[:10])
     except Exception as exc:
+        st.update(listed=len(oids), complete=False)
         logger.error("indexed object-list read failed on %s: %s (kept %d of %s objects)",
                      dev_oid, exc, len(oids), count)
     return oids

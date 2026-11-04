@@ -100,7 +100,9 @@ objects takes a few minutes. It then:
 - prints a count per unit.
 
 Points the map does not place are kept, under no unit. Re-run it whenever you change the
-map; it never changes which points you chose to log.
+map; it never changes which points you chose to log. It does re-apply the map to every point,
+so a point you moved by hand goes back where the map says: for a controller whose program
+changed, the Point Selection rescan (below) is the gentler tool.
 
 ## 4. Choose what to log
 
@@ -158,6 +160,34 @@ plain English ("Discharge Air Temp", "Boiler 1 Supply Water Temp"). If a point g
 wrong role, or none:
 - rename it in the viewer, then rebuild the model;
 - and please open an issue with the name, so the classifier can learn it.
+
+## After a programming change: rescan a controller
+
+Added a point in a panel's program, a unit to a Tracer SC, renamed something at the
+workstation? On **Point Selection**, click **⟲ Rescan controller**, pick the controller (the
+one holding the unit on screen is chosen for you) and click **Rescan**. It reads that
+controller's object list again on the server's own BACnet connection, so logging carries on
+and nothing has to be stopped. It takes seconds for a panel, a minute or two for a
+supervisory controller with thousands of objects.
+
+What it does with what it finds:
+- **New points** appear on their unit's list, unticked, placed by the equipment map. One the
+  map does not place goes on no unit; give it a `point_systems` rule, restart the server,
+  and rescan.
+- **Renamed points** keep their logging choice and their history: a point is the same point
+  as long as its object type and number are.
+- **Points that already have a unit are never moved**, even when the map would now say
+  otherwise, so a split you made by hand stays as it is. A point with no unit gets one only
+  from a rule that names it (`point_systems`, `sc_dac_map`), never from a whole-controller
+  default.
+- **Points the controller no longer has** are listed, not deleted; untick any that are still
+  logged. They are listed only when the controller's whole object list was read: a short read
+  is never taken for deletions.
+- Trend logs, programs and files are stored but go on no unit's list.
+
+When something changed, the roles are re-classified straight away, so the dashboard and the
+alarm rules see it. Like everything else here, a rescan only reads; it is not offered to
+other computers on the network.
 
 ## Site knowledge
 

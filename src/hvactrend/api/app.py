@@ -1067,6 +1067,66 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         return {"device_instance": device_instance,
                 "objects": [_object_json(o) for o in objects]}
 
+    # ── rescan one controller (Point Selection's button; rescan.py) ───────────
+    # The object list is read on the shared stack while the collector keeps polling, so
+    # nothing is stopped. One at a time: a Tracer SC is ~5,500 objects, a minute or two of
+    # reads, and two at once would only double the load on the controllers.
+    def _rescan_state() -> dict:
+        st = getattr(app.state, "rescan", None)
+        if st is None:
+            st = app.state.rescan = {"state": "idle"}
+        return st
+
+    @app.get("/api/rescan/controllers")
+    async def rescan_controllers() -> dict[str, Any]:
+        from .. import rescan as _rescan
+        return {"controllers": await asyncio.to_thread(
+            _rescan.controllers, str(app.state.dal.db_path), app.state.config),
+                "bacnet": getattr(app.state, "bacnet", None) is not None}
+
+    @app.get("/api/rescan")
+    async def rescan_status() -> dict[str, Any]:
+        st = _rescan_state()
+        return {k: v for k, v in st.items() if k != "task"}
+
+    @app.post("/api/rescan")
+    async def rescan_start(device: int, authorization: str = Header(default=""),
+                           x_auth_token: str = Header(default="")) -> dict[str, Any]:
+        _require_auth(authorization, x_auth_token)   # minutes of reads + inventory writes
+        if not 0 <= device <= 4194302:
+            raise HTTPException(status_code=400, detail="device must be 0..4194302")
+        bacnet = _bacnet()
+        st = _rescan_state()
+        if st.get("state") == "running":
+            raise HTTPException(status_code=409,
+                                detail=f"controller {st.get('device')} is being rescanned")
+        from .. import rescan as _rescan
+
+        def progress(done: int, total: int) -> None:
+            st["done"], st["total"] = done, total
+
+        async def run() -> None:
+            try:
+                st["result"] = await _rescan.rescan_device(
+                    bacnet, str(app.state.dal.db_path),
+                    _rescan.default_schema(app.state.config), app.state.config, device,
+                    on_progress=progress)
+                st["state"] = "done"
+            except _rescan.RescanError as exc:
+                st.update(state="error", error=str(exc))
+            except Exception as exc:  # noqa: BLE001 -- shown on the page, and logged
+                logger.exception("rescan of %s failed", device)
+                st.update(state="error", error=f"rescan failed: {exc}")
+            finally:
+                st["finished_utc"] = int(time.time())
+                st.pop("task", None)
+
+        st.clear()
+        st.update(state="running", device=device, done=0, total=None,
+                  started_utc=int(time.time()))
+        st["task"] = asyncio.create_task(run(), name=f"rescan-{device}")
+        return {k: v for k, v in st.items() if k != "task"}
+
     # ── trend viewer (Phase 3) — reads stored samples, no BACnet needed ───────
     @app.get("/api/logged")
     async def logged_points() -> dict[str, Any]:
