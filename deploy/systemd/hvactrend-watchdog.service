@@ -1,0 +1,12 @@
+# One watchdog run: data-stopped alerts, the alarm rules, phone notifications.
+# Started every 5 minutes by hvactrend-watchdog.timer. Edit User= and the paths to match
+# hvactrend.service.
+[Unit]
+Description=HVACTrend watchdog (one run)
+
+[Service]
+Type=oneshot
+User=hvactrend
+WorkingDirectory=/opt/hvactrend
+ExecStart=/opt/hvactrend/.venv/bin/python scripts/watchdog.py --quiet
+TimeoutStartSec=300

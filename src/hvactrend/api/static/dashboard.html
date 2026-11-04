@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HVACTrend — Unit Dashboard</title>
+<style>
+  :root {
+    --bg:#0b0e13; --panel:#131922; --panel2:#0f141c; --line:#243044;
+    --fg:#c9d4e3; --dim:#7c8aa0; --accent:#39d353; --accent2:#4aa8ff;
+    --fault:#ff5f56; --amber:#f0b429; --crit:#ff3b30; --ovr:#b48cff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); min-height:100vh;
+    font:14px/1.5 ui-monospace,"Cascadia Code",Consolas,monospace; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:16px; background:var(--panel2);
+    position:sticky; top:0; z-index:5; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.5px; color:var(--accent); }
+  header a { color:var(--dim); text-decoration:none; font-size:12px; }
+  header a:hover { color:var(--accent2); }
+  header a.active { color:var(--fg); }
+  header .status { color:var(--dim); font-size:12px; margin-left:auto; }
+  .units { display:flex; flex-wrap:wrap; gap:6px; padding:10px 16px;
+    border-bottom:1px solid var(--line); background:var(--panel2); position:sticky;
+    top:43px; z-index:4; }
+  .units button { background:var(--panel); color:var(--dim); border:1px solid var(--line);
+    border-radius:5px; padding:5px 11px; cursor:pointer; font:inherit; font-size:12px; }
+  .units button:hover { border-color:var(--accent2); color:var(--fg); }
+  .units button.active { background:var(--accent2); color:#04121f; border-color:var(--accent2);
+    font-weight:bold; }
+  .units button .u-dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+    margin-left:5px; vertical-align:middle; }
+  main { max-width:1180px; margin:0 auto; padding:16px; }
+  .head { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; margin-bottom:14px; }
+  .hcards { display:flex; flex-wrap:wrap; gap:10px; flex:1; }
+  .hc { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:9px 13px; min-width:120px; }
+  .hc .k { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; }
+  .hc .v { font-size:15px; margin-top:2px; }
+  .hc.bad { border-color:var(--fault); } .hc.warn { border-color:var(--amber); }
+  .hc.ovr { border-color:var(--ovr); }
+  .banner { border-radius:8px; padding:9px 13px; margin-bottom:10px; font-size:13px; }
+  .banner.alert { background:#2a1414; border:1px solid var(--fault); }
+  .banner.finding { background:#221a10; border:1px solid var(--amber); }
+  .banner.note { background:#0f1c22; border:1px solid var(--accent2); }
+  .banner.ovr { background:#1b1530; border:1px solid var(--ovr); }
+  .banner b { color:var(--fg); }
+  .banner .row { padding:2px 0; }
+  .sev { font-size:10px; padding:1px 6px; border-radius:3px; margin-right:6px;
+    text-transform:uppercase; }
+  .sev.critical { background:var(--crit); color:#fff; } .sev.high { background:var(--fault); color:#fff; }
+  .sev.medium { background:var(--amber); color:#04121f; } .sev.low,.sev.info { background:var(--line); color:var(--fg); }
+  .soo { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:9px 13px; margin-bottom:12px; font-size:12px; color:var(--dim); white-space:pre-wrap; }
+  .soo b { color:var(--fg); }
+  .grp { margin-bottom:16px; }
+  .grp h2 { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.6px;
+    margin:0 0 6px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(258px,1fr)); gap:8px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:7px;
+    padding:8px 10px; cursor:pointer; display:flex; flex-direction:column; gap:2px; }
+  .card:hover { border-color:var(--accent2); }
+  .card .nm { font-size:12px; color:var(--fg); overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .card .rl { font-size:10px; color:var(--dim); }
+  .card .valrow { display:flex; align-items:baseline; gap:8px; margin-top:2px; }
+  .card .val { font-size:19px; font-weight:bold; }
+  .card .un { font-size:11px; color:var(--dim); }
+  .card .age { font-size:10px; color:var(--dim); margin-left:auto; }
+  .card .age.stale { color:var(--amber); } .card .age.dead { color:var(--fault); }
+  .card.q-fault { border-left:3px solid var(--fault); }
+  .card.q-comm { border-left:3px solid var(--amber); }
+  .card.q-stale { border-left:3px solid var(--amber); }
+  .qbadge { font-size:9px; padding:1px 5px; border-radius:3px; margin-left:6px; }
+  .qbadge.fault { background:var(--fault); color:#fff; }
+  .qbadge.comm { background:var(--amber); color:#04121f; }
+  .qbadge.ovr { background:var(--ovr); color:#04121f; }
+  .qbadge.ovr.exp { background:transparent; color:var(--ovr); border:1px solid var(--ovr); }
+  .banner .row.exp { color:var(--dim); }
+  .card.q-ovr { border-left:3px solid var(--ovr); }
+  .spark { margin-top:3px; height:30px; width:100%; display:block; }
+  .empty { color:var(--dim); padding:40px 0; text-align:center; }
+  a.plain { color:inherit; text-decoration:none; }
+  /* fleet matrix */
+  .fleet { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
+  .fleet th, .fleet td { padding:7px 10px; text-align:right; white-space:nowrap;
+    border-bottom:1px solid var(--line); }
+  .fleet thead th { position:sticky; top:87px; background:var(--panel2); color:var(--dim);
+    font-weight:normal; font-size:11px; text-transform:uppercase; letter-spacing:.4px;
+    cursor:pointer; z-index:3; border-bottom:1px solid var(--line); }
+  .fleet thead th:hover { color:var(--accent2); }
+  .fleet th.ul, .fleet td.ul { text-align:left; }
+  .fleet tbody tr:hover td { background:var(--panel); }
+  .fleet .ucell { cursor:pointer; }
+  .fleet .ucell b { color:var(--fg); }
+  .fleet .ucell:hover b { color:var(--accent2); }
+  .fleet .cell { cursor:pointer; font-variant-numeric:tabular-nums; }
+  .fleet .cell .cu { color:var(--dim); font-size:10px; margin-left:2px; }
+  .fleet .cell.out { color:var(--amber); font-weight:bold; }
+  .fleet .cell.fault { color:var(--fault); font-weight:bold; }
+  .fleet .cell.stale { color:var(--dim); }
+  .fleet .cell.nodata { color:var(--dim); }
+  .badge { display:inline-block; min-width:16px; padding:0 5px; border-radius:8px;
+    font-size:11px; margin-left:4px; }
+  .badge.al { background:var(--fault); color:#fff; } .badge.fn { background:var(--amber); color:#04121f; }
+  .badge.ov { background:var(--ovr); color:#04121f; }
+  .hint { color:var(--dim); font-size:11px; margin:2px 0 12px; }
+  .hint a, .hint button.link { color:var(--accent2); background:none; border:none; cursor:pointer;
+    font:inherit; padding:0; }
+  .colpick { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:12px 14px; margin-bottom:12px; }
+  .colpick h3 { margin:0 0 8px; font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; }
+  .colpick .opts { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:4px 14px; }
+  .colpick label { display:flex; align-items:center; gap:7px; font-size:12px; cursor:pointer; }
+  .colpick label .cnt { color:var(--dim); font-size:10px; margin-left:auto; }
+  .colpick .actions { margin-top:10px; display:flex; gap:10px; }
+  .colpick button { background:var(--panel2); color:var(--fg); border:1px solid var(--line);
+    border-radius:5px; padding:4px 12px; cursor:pointer; font:inherit; font-size:12px; }
+  .colpick button.primary { background:var(--accent2); color:#04121f; border-color:var(--accent2); font-weight:bold; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HVACTrend</h1>
+  <a href="/">Point Selection</a>
+  <a href="/coverage">Point Coverage</a>
+  <a href="/dashboard" class="active">Unit Dashboard</a>
+  <a href="/trends">Trend Viewer</a>
+  <a href="/reports">AI Reports</a>
+  <a href="/settings">Settings</a>
+  <span class="status" id="status">loading…</span>
+</header>
+<div class="units" id="units"></div>
+<main id="main"><div class="empty">Loading units…</div></main>
+
+<script>
+const $ = s => document.querySelector(s);
+const TOKKEY='hvactrend_ui_token';
+function authHeaders(){const t=sessionStorage.getItem(TOKKEY)||'';return t?{'Authorization':'Bearer '+t}:{};}
+async function j(url){ const r=await fetch(url,{headers:authHeaders()});
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail||r.status); return r.json(); }
+function esc(s){ return (s==null?'':s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmt(v){ if(v==null||!isFinite(v)) return '—';
+  const a=Math.abs(v); return (a>=100?v.toFixed(0):a>=10?v.toFixed(1):v.toFixed(2)); }
+function shortName(nm){ return (nm||'').split('|')[0].trim(); }
+
+// role -> friendly label + display group. Grouping is what makes ~45 points readable.
+const ROLE_LABEL = {
+  DAT:'Discharge Air Temp', MAT:'Mixed Air Temp', RAT:'Return Air Temp', OAT:'Outdoor Air Temp',
+  ROOM_TEMP:'Room / Zone Temp', MECH_TEMP:'Mech Room Temp', DAT_ACTIVE_SP:'Discharge Air SP',
+  DUCT_PRESS:'Duct Static Press', DUCT_PRESS_SP:'Duct Static SP', ROOM_SP:'Room Setpoint',
+  SPACE_PRESS:'Space Pressure', SPACE_PRESS_SP:'Space Pressure SP', FAN_SPEED:'Supply Fan Speed',
+  EXH_FAN_SPEED:'Exhaust Fan Speed', FAN_STATUS:'Fan Status', OA_DAMPER:'OA Damper',
+  EF_DAMPER:'Exhaust Damper', HTG_VALVE:'Heating Valve', CLG_VALVE:'Cooling Valve',
+  HUMIDITY:'Humidity', OA_FLOW:'OA Flow', COOLING_STAGES:'Cooling Stages',
+  HEATING_STAGES:'Heating Stages', ENTHALPY:'Enthalpy', MODE:'Mode', OCCUPANCY:'Occupancy',
+  COMM:'Comm Status', ALARM:'Alarm', FILTER:'Filter',
+};
+const GROUPS = [
+  ['Temperatures', ['DAT','MAT','RAT','OAT','ROOM_TEMP','MECH_TEMP']],
+  ['Setpoints',    ['DAT_ACTIVE_SP','DUCT_PRESS_SP','ROOM_SP','SPACE_PRESS_SP']],
+  ['Fans',         ['FAN_SPEED','EXH_FAN_SPEED','FAN_STATUS']],
+  ['Dampers',      ['OA_DAMPER','EF_DAMPER']],
+  ['Valves',       ['HTG_VALVE','CLG_VALVE']],
+  ['Pressure & Flow',['DUCT_PRESS','SPACE_PRESS','OA_FLOW']],
+  ['Humidity & Energy',['HUMIDITY','ENTHALPY']],
+  ['Staging',      ['COOLING_STAGES','HEATING_STAGES']],
+  ['Status & Mode',['MODE','OCCUPANCY','COMM','ALARM','FILTER']],
+];
+const GROUP_OF = {}; GROUPS.forEach(([g,roles])=>roles.forEach(r=>GROUP_OF[r]=g));
+// canonical column order for the matrix (temps first, then setpoints, fans, …) so the
+// picker's output is comparison-friendly no matter what order the operator clicked
+const ROLE_ORDER = GROUPS.flatMap(([g,roles])=>roles);
+
+let cur=null, NOW=0, timer=null;
+
+// operator-chosen fleet columns, persisted per browser (like the viewer's saved views).
+// null = use the server's default set.
+const COLKEY='occhv_dash_cols';
+function chosenCols(){ try{ const v=JSON.parse(localStorage.getItem(COLKEY)); return Array.isArray(v)&&v.length?v:null; }catch(e){ return null; } }
+function setChosenCols(arr){ if(arr&&arr.length) localStorage.setItem(COLKEY, JSON.stringify(arr)); else localStorage.removeItem(COLKEY); }
+// compact column headers for the matrix (narrow), else fall back to the full role label
+const SHORT_LABEL = {DAT:'Disch Air', MAT:'Mixed Air', RAT:'Return Air', OAT:'Outdoor Air',
+  ROOM_TEMP:'Room Temp', MECH_TEMP:'Mech Temp', DAT_ACTIVE_SP:'Disch SP', DUCT_PRESS:'Duct SP',
+  DUCT_PRESS_SP:'Duct SP set', ROOM_SP:'Room SP', FAN_SPEED:'Fan %', EXH_FAN_SPEED:'Exh Fan %',
+  FAN_STATUS:'Fan', OA_DAMPER:'OA Dmpr', EF_DAMPER:'Exh Dmpr', HTG_VALVE:'Htg Vlv',
+  CLG_VALVE:'Clg Vlv', HUMIDITY:'RH', OA_FLOW:'OA Flow', COOLING_STAGES:'Clg Stg',
+  HEATING_STAGES:'Htg Stg', ENTHALPY:'Enth', MODE:'Mode', OCCUPANCY:'Occ', SPACE_PRESS:'Sp Press'};
+function colLabel(role, fallback){ return SHORT_LABEL[role] || ROLE_LABEL[role] || fallback || role; }
+
+function ageStr(t){ if(t==null) return {txt:'no data', cls:'dead'};
+  const a = NOW - t;
+  if(a<180) return {txt:'now', cls:''};
+  if(a<3600) return {txt:Math.round(a/60)+'m', cls: a>900?'stale':''};
+  if(a<86400) return {txt:Math.round(a/3600)+'h', cls:'dead'};
+  return {txt:Math.round(a/86400)+'d', cls:'dead'};
+}
+
+// tiny inline SVG sparkline from the 24h 5-minute buckets
+function spark(points, w=236, h=30){
+  const good = points.filter(p=>p[1]!=null && isFinite(p[1]));
+  if(good.length<2) return '';
+  let lo=Infinity, hi=-Infinity, t0=good[0][0], t1=good[good.length-1][0];
+  for(const p of good){ if(p[1]<lo)lo=p[1]; if(p[1]>hi)hi=p[1]; }
+  if(lo===hi){ lo-=1; hi+=1; }
+  const x=t=> (t1===t0?0:(t-t0)/(t1-t0))*(w-2)+1;
+  const y=v=> h-2 - (v-lo)/(hi-lo)*(h-4);
+  // break the line on gaps > 30 min so an outage isn't a straight line
+  let d='', pen=false, prevT=null;
+  for(const p of good){
+    if(pen && prevT!=null && p[0]-prevT > 1800) pen=false;   // gap -> lift the pen
+    d += (pen?'L':'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1) + ' ';
+    pen=true; prevT=p[0];
+  }
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <path d="${d}" fill="none" stroke="#4aa8ff" stroke-width="1.3"/></svg>`;
+}
+
+const natcmp=(a,b)=>a.replace(/\d+/,n=>n.padStart(6,'0')).localeCompare(b.replace(/\d+/,n=>n.padStart(6,'0')));
+async function loadUnits(){
+  const d = await j('/api/systems');
+  const box = $('#units');
+  const systems = d.systems.slice().sort((a,b)=>natcmp(a.code,b.code));
+  box.innerHTML = `<button data-fleet="1">▣ All units</button>`
+    + systems.map(s=>`<button data-code="${esc(s.code)}" data-id="${s.id}">${esc(s.code)}</button>`).join('');
+  box.querySelector('[data-fleet]').onclick=()=>selectFleet();
+  box.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>selectUnit(parseInt(b.dataset.id), b.dataset.code));
+  const want = new URLSearchParams(location.search).get('unit');
+  const start = want && systems.find(s=>s.code===want);
+  if(start) selectUnit(start.id, start.code); else selectFleet();   // default = the fleet
+}
+
+function markActive(sel){
+  document.querySelectorAll('.units button').forEach(b=>b.classList.toggle('active',
+    sel==='fleet' ? b.dataset.fleet!=null : parseInt(b.dataset.id)===sel));
+}
+
+async function selectFleet(){
+  cur = 'fleet'; markActive('fleet');
+  history.replaceState(null,'', location.pathname);
+  await refresh();
+}
+async function selectUnit(id, code){
+  cur = {id, code}; markActive(id);
+  history.replaceState(null,'', '?unit='+encodeURIComponent(code));
+  await refresh();
+}
+
+async function refresh(){
+  if(!cur) return;
+  try{
+    if(cur==='fleet'){
+      const cols=chosenCols();
+      const url='/api/overview'+(cols?'?roles='+encodeURIComponent(cols.join(',')):'');
+      const d=await j(url); NOW=d.now_utc; FLEET_META={available:d.available_roles, def:d.default_roles};
+      renderFleet(d);
+    }
+    else { const d=await j('/api/systems/'+cur.id+'/overview'); NOW=d.now_utc; render(d); }
+  } catch(e){ $('#status').textContent='error: '+e.message; return; }
+  $('#status').textContent = 'updated '+new Date(NOW*1000).toLocaleTimeString();
+}
+let FLEET_META={available:[], def:[]}, pickerOpen=false;
+
+// ── building-wide matrix: one row per unit, one column per key reading ────────
+function renderFleet(d){
+  const cols = d.columns, units = d.units.slice().sort((a,b)=>natcmp(a.code,b.code));
+  // per-column robust outlier band (median ± 3·scale) — flags the odd unit without any
+  // hardcoded per-metric threshold, the same idea as the fleet-outlier detector. The
+  // scale is floored at 6% of the median so a tightly-clustered column (e.g. every duct
+  // static ~1.2) doesn't flag normal jitter as an outlier, while a genuinely-off unit
+  // (a static that collapsed to 0.06) still stands out.
+  const band = {};
+  for(const col of cols){
+    const vs = units.map(u=>u.cells[col.role]?.last_good?.v).filter(v=>v!=null&&isFinite(v));
+    if(vs.length<4){ band[col.role]=null; continue; }
+    const med = median(vs);
+    const mad = median(vs.map(v=>Math.abs(v-med)));
+    const scale = Math.max(mad, Math.abs(med)*0.06, 1e-6);
+    band[col.role] = {med, scale};
+  }
+  let html = `<div class="hint">Click a unit to drill in · a column header to chart that reading across all units · a cell to open that point. Amber = statistical outlier vs the fleet. <button class="link" id="cfgCols">⚙ Columns</button></div>
+    ${pickerOpen ? colPickerHtml(cols) : ''}
+    <table class="fleet"><thead><tr>
+      <th class="ul">Unit</th>
+      ${cols.map(c=>`<th data-role="${esc(c.role)}" title="Chart ${esc(colLabel(c.role,c.label))} across all units">${esc(colLabel(c.role,c.label))}</th>`).join('')}
+    </tr></thead><tbody>`;
+  for(const u of units){
+    const badges = (u.alerts?`<span class="badge al" title="active alerts">${u.alerts}</span>`:'')
+                 + (u.findings?`<span class="badge fn" title="open findings">${u.findings}</span>`:'')
+                 + (u.overrides?`<span class="badge ov" title="points under an override (an operator, or life safety)">OVR ${u.overrides}</span>`:'');
+    html += `<tr>
+      <td class="ul ucell" data-code="${esc(u.code)}"><b>${esc(u.code)}</b>${badges}</td>
+      ${cols.map(c=>fleetCell(u.cells[c.role], band[c.role], u.occupancy_mode==='vacant')).join('')}
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  $('#main').innerHTML = html;
+  $('#cfgCols').onclick=()=>{ pickerOpen=!pickerOpen; renderFleet(d); };
+  if(pickerOpen) wireColPicker(cols);
+  $('#main').querySelectorAll('.ucell').forEach(el=>el.onclick=()=>{
+    const s=d.units.find(u=>u.code===el.dataset.code); if(s) selectUnit(s.id, s.code); });
+  $('#main').querySelectorAll('th[data-role]').forEach(el=>el.onclick=()=>{
+    const ids=units.map(u=>u.cells[el.dataset.role]?.point_id).filter(Boolean);
+    if(ids.length) location.href='/trends?points='+ids.join(',');
+  });
+  $('#main').querySelectorAll('.cell[data-pt]').forEach(el=>el.onclick=()=>
+    location.href='/trends?points='+el.dataset.pt);
+}
+
+// ── column picker: choose which readings the matrix shows (persisted per browser) ──
+function colPickerHtml(activeCols){
+  const active = new Set(activeCols.map(c=>c.role));
+  const avail = (FLEET_META.available||[]).slice()
+    .sort((a,b)=>colLabel(a.role).localeCompare(colLabel(b.role)));
+  const opts = avail.map(r=>`<label><input type="checkbox" data-role="${esc(r.role)}"
+      ${active.has(r.role)?'checked':''}> ${esc(colLabel(r.role))}
+      <span class="cnt">${r.units} unit${r.units!=1?'s':''}</span></label>`).join('');
+  return `<div class="colpick"><h3>Columns to show</h3>
+    <div class="opts">${opts || '<span style="color:var(--dim)">no roles available</span>'}</div>
+    <div class="actions">
+      <button class="primary" id="colApply">Apply</button>
+      <button id="colReset">Reset to defaults</button>
+      <button id="colClose">Close</button>
+    </div></div>`;
+}
+function wireColPicker(cols){
+  const box=$('#main');
+  box.querySelector('#colApply').onclick=()=>{
+    // keep a stable, comparison-friendly order regardless of click order
+    const picked=[...box.querySelectorAll('.colpick input:checked')].map(i=>i.dataset.role);
+    const ordered=ROLE_ORDER.filter(r=>picked.includes(r)).concat(picked.filter(r=>!ROLE_ORDER.includes(r)));
+    if(!ordered.length){ return; }               // never let them clear every column
+    setChosenCols(ordered); pickerOpen=false; refresh();
+  };
+  box.querySelector('#colReset').onclick=()=>{ setChosenCols(null); pickerOpen=false; refresh(); };
+  box.querySelector('#colClose').onclick=()=>{ pickerOpen=false; refresh(); };
+}
+
+function fleetCell(cell, band, vacant){
+  if(!cell) return `<td class="cell nodata">·</td>`;
+  const lg=cell.last_good, last=cell.last;
+  if(!last && !lg) return `<td class="cell nodata" ${cell.point_id?`data-pt="${cell.point_id}"`:''}>no data</td>`;
+  const q = last?last.q:null;
+  let cls='cell', v = lg?lg.v:null;
+  if(q==='fault'||q==='comm-loss') cls+=' fault';
+  else if(lg && (NOW-lg.t)>900) cls+=' stale';
+  // a vacant unit is SUPPOSED to sit idle (fans off, no static) — don't flag it as an
+  // outlier, same reason the AI is told idle is expected for vacant equipment
+  else if(!vacant && band && v!=null && Math.abs(v-band.med) > 3*band.scale) cls+=' out';
+  const disp = v!=null ? fmt(v) : (last&&last.vt!=null?esc(last.vt):'—');
+  const un = cell.units ? `<span class="cu">${esc(shortUnit(cell.units))}</span>` : '';
+  const tip = q&&q!=='good' ? ` title="${esc(q)}"` : '';
+  return `<td class="${cls}" data-pt="${cell.point_id}"${tip}>${disp}${un}</td>`;
+}
+function median(a){ const s=[...a].sort((x,y)=>x-y), n=s.length;
+  return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; }
+
+function render(d){
+  const s=d.system;
+  let html = `<div class="hint"><a href="#" id="backFleet" style="color:var(--accent2)">‹ All units</a></div>
+    <div class="head">
+    <div class="hcards">
+      <div class="hc"><div class="k">Unit</div><div class="v">${esc(s.code)}${s.name&&s.name!==s.code?' — '+esc(s.name):''}</div></div>
+      <div class="hc"><div class="k">Occupancy</div><div class="v">${esc(s.occupancy_mode||'scheduled')}</div></div>
+      <div class="hc ${d.alerts.length?'bad':''}"><div class="k">Active alerts</div><div class="v">${d.alerts.length}</div></div>
+      <div class="hc ${d.findings.length?'warn':''}"><div class="k">Open findings</div><div class="v">${d.findings.length}</div></div>
+      <div class="hc ${(d.overrides||[]).some(o=>!o.expected)?'ovr':''}"><div class="k">Overrides</div><div class="v">${(d.overrides||[]).filter(o=>!o.expected).length}</div></div>
+      ${equipSummary(d.equipment)}
+    </div></div>`;
+
+  if(d.alerts.length) html += `<div class="banner alert">${d.alerts.map(a=>
+    `<div class="row"><span class="sev ${esc((a.severity||'').toLowerCase())}">${esc(a.severity)}</span>${esc(a.message)}</div>`).join('')}</div>`;
+  // after-hours use (DAL.after_hours_sessions): the unit run outside its schedule by an
+  // occupancy override, a thermostat's button most often -- listed apart from the overrides
+  if((d.after_hours||[]).length) html += `<div class="banner note"><b>After-hours use, last 7 days:</b>${d.after_hours.map(a=>
+    `<div class="row">${esc(a.text)}</div>`).join('')}</div>`;
+  // who has overridden what (bacnet/priority.py): an operator at the workstation, or life safety
+  if((d.overrides||[]).length) html += `<div class="banner ovr"><b>Overridden:</b>${d.overrides.map(o=>
+    `<div class="row${o.expected?' exp':''}">${esc(o.display_name||shortName(o.name))} = ${esc(o.value)} · ${esc(o.level_name)} · since ${o.since_exact?'':'at least '}${when(o.since_utc)}${o.expected?' · held on purpose: '+esc(o.expected):''}</div>`).join('')}</div>`;
+  if(d.operator_notes.length) html += `<div class="banner note"><b>Operator log:</b> ${d.operator_notes.map(n=>
+    esc(n.title)+' ('+when(n.ts_utc,n.ts_end_utc)+')').join(' · ')}</div>`;
+  if(d.findings.length) html += `<div class="banner finding">${d.findings.slice(0,6).map(f=>
+    `<div class="row"><span class="sev ${esc((f.severity||'info').toLowerCase())}">${esc(f.severity)}</span>${esc(f.summary)}</div>`).join('')}</div>`;
+  if(s.sequence_of_operations) html += `<div class="soo"><b>Sequence of operations:</b>\n${esc(s.sequence_of_operations)}</div>`;
+
+  // points grouped by role
+  const byGroup = {}; GROUPS.forEach(([g])=>byGroup[g]=[]); byGroup['Other']=[];
+  for(const p of d.points){ (byGroup[GROUP_OF[p.role]||'Other']).push(p); }
+  for(const [g] of GROUPS.concat([['Other']])){
+    const pts = byGroup[g]; if(!pts||!pts.length) continue;
+    // canonical / named-role points first, raw "Other" last, then by name
+    pts.sort((a,b)=> (b.role_canonical?1:0)-(a.role_canonical?1:0) || shortName(a.name).localeCompare(shortName(b.name)));
+    html += `<div class="grp"><h2>${esc(g)} <span style="color:var(--dim)">(${pts.length})</span></h2>
+      <div class="cards">${pts.map(card).join('')}</div></div>`;
+  }
+  $('#main').innerHTML = html;
+  const back=$('#backFleet'); if(back) back.onclick=(e)=>{ e.preventDefault(); selectFleet(); };
+  $('#main').querySelectorAll('[data-pt]').forEach(el=>
+    el.onclick=()=> location.href='/trends?points='+el.dataset.pt);
+}
+
+function card(p){
+  const lg=p.last_good, last=p.last;
+  const val = lg ? fmt(lg.v) : (last && last.vt!=null ? esc(last.vt) : '—');
+  const un = p.units_text ? shortUnit(p.units_text) : '';
+  const q = last ? last.q : null;
+  const stale = lg && (NOW - lg.t) > 900;
+  let qcls='', qbadge='';
+  if(q==='fault'){ qcls='q-fault'; qbadge='<span class="qbadge fault">fault</span>'; }
+  else if(q==='comm-loss'){ qcls='q-comm'; qbadge='<span class="qbadge comm">comm loss</span>'; }
+  else if(!last){ qcls='q-stale'; }
+  else if(stale){ qcls='q-stale'; }
+  if(p.override){            // under an override: say so, whatever its reading's quality
+    const ex = p.override.expected;     // held on purpose (site knowledge): shown, not flagged
+    if(!qcls && !ex) qcls='q-ovr';
+    qbadge += `<span class="qbadge ovr${ex?' exp':''}" title="${esc(p.override.text+(ex?' — held on purpose: '+ex:''))}">OVR ${p.override.level}</span>`;
+  }
+  const a = ageStr(lg ? lg.t : (last?last.t:null));
+  const nm = shortName(p.name);
+  let role = ROLE_LABEL[p.role] || '';
+  if(role.toLowerCase()===nm.toLowerCase()) role='';   // don't print the same label twice
+  return `<div class="card ${qcls}" data-pt="${p.id}" title="${esc(p.name)} — open in Trend Viewer">
+    <div class="nm">${esc(nm)}${qbadge}</div>
+    ${role?`<div class="rl">${esc(role)}</div>`:''}
+    <div class="valrow"><span class="val">${val}</span><span class="un">${esc(un)}</span>
+      <span class="age ${a.cls}">${a.txt}</span></div>
+    ${spark(p.spark)}
+  </div>`;
+}
+
+function shortUnit(u){ return ({'degrees-fahrenheit':'°F','degrees-celsius':'°C','percent':'%',
+  'inches-of-water':'in wc','percent-relative-humidity':'%RH','cubic-feet-per-minute':'cfm',
+  'parts-per-million':'ppm','no-units':''})[u] || u; }
+function equipSummary(eq){
+  if(!eq || !Object.keys(eq).length) return '';
+  const bits=[]; for(const k of ['unit_type','tons','cooling_type','heating_type']){
+    if(eq[k]) bits.push(esc(eq[k].value)+(eq[k].unit?(' '+esc(eq[k].unit)):'')); }
+  return bits.length? `<div class="hc"><div class="k">Equipment</div><div class="v">${bits.join(' · ')}</div></div>`:'';
+}
+function when(a,b){ const f=t=>new Date(t*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  return b? f(a)+'→'+new Date(b*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : f(a); }
+
+loadUnits().catch(e=>{ $('#main').innerHTML='<div class="empty">Failed to load: '+esc(e.message)+'</div>'; });
+// not while the column picker is open: the refresh redrew it and threw away unapplied ticks
+timer = setInterval(()=>{ if(!pickerOpen) refresh().catch(()=>{}); }, 60000);   // live-ish
+</script>
+</body>
+</html>

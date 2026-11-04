@@ -1,0 +1,230 @@
+# HVACTrend configuration
+# ---------------------------------------------------------------------------------------------
+# Copy this file to config/config.yaml (the setup wizard, scripts/configure.py, does it for you)
+# and fill in the two <PLACEHOLDERS> under `bacnet`. Until they are filled in, HVACTrend
+# refuses to connect to the BACnet network.
+#
+# config.yaml is this building's own file: it is ignored by git and backed up daily
+# (storage.snapshot_interval_s). Secrets -- API keys, the phone-alert topic, the UI token --
+# never go in here: enter them on the Settings page, which keeps them in config/secrets.env.
+#
+# Changes here take effect when the server restarts. Many settings can also be changed on
+# the Settings page; the BACnet identity, the read-only safety switches and storage cannot.
+# Full reference: docs/configuration.md
+
+site:
+  code: "MAIN"                         # short code for this building (letters/digits)
+  name: "My Building"                  # shown in the pages and the AI summary
+  location: ""                         # e.g. "Springfield, IL": tells the AI summary where
+                                       # the building is (its weather is local)
+  timezone: "America/New_York"         # informational. Times are shown in the COMPUTER'S own
+                                       # time zone: set Windows/Linux to the building's zone.
+
+# ── BACnet ──────────────────────────────────────────────────────────────────────────────────
+# HVACTrend is a READ-ONLY BACnet/IP client: it never writes to a controller (enforced in
+# code, not only by the switches below). It runs ONE BACnet application that the collector
+# and the web pages share; do not run another BACnet program on the same network card.
+bacnet:
+  # This computer's own address on the BACnet network, with its prefix length:
+  # "192.168.1.50/24". Give the computer a static address or a DHCP reservation.
+  local_address: "<COLLECTOR_IP>/24"
+  # This program's own BACnet device instance. It must not clash with any device on the
+  # network: pick an unused number (scripts/discover.py lists the ones in use).
+  device_instance: "<LOGGER_DEVICE_INSTANCE>"
+  object_name: "HVACTrend-Logger"
+  vendor_identifier: 999               # bacpypes3's default; harmless for a read-only client
+
+  poll:
+    interval_s: 120                    # how often every logged point is read
+    stagger_s: 5                       # pause between controllers within a cycle
+    rpm_batch: 10                      # points per ReadPropertyMultiple request
+    device_budget_s: 45                # most time one controller may take per cycle
+    # Who is in control of each logged commandable point: its priority array is READ
+    # (never written) this often, so an operator override shows on the pages and in alarms.
+    priority_interval_s: 600           # 0 = off
+    priority_batch: 5
+
+  # Defence in depth. Writes are refused in code whatever these say, and the destructive
+  # services (reinitialize, device-communication-control, file writes, create/delete
+  # object) are blocked unconditionally. Leave both false.
+  safety:
+    allow_writes: false
+    allow_cov: false
+
+# ── Units: which points belong to which piece of equipment ──────────────────────────────────
+# Discovery finds controllers and their points; this map groups the points into units
+# (AHU-1, BLR-2, ...). Run scripts/discover.py to see the device instances, fill this in,
+# then run scripts/commission.py. `kind` (ahu | hv | plant) decides which alarm rules apply;
+# without it, it is guessed from the name (AHU-1, RTU-2 -> ahu; BLR-1, CT-1 -> plant).
+# Full guide: docs/commissioning.md
+equipment:
+  building: {code: "MAIN", name: "Main building"}
+  device_systems: {}                   # one controller = one unit, e.g.
+                                       #   1001: "AHU-1"
+                                       #   1002: {system: "RTU-2", kind: ahu}
+  point_systems: []                    # one controller, several units, by point-name glob:
+                                       #   - {device: 2001, match: "*CT1*", system: "CT-1", kind: plant}
+                                       #   - {device: 2001, match: "*BLR1*", system: "BLR-1", kind: plant}
+  sc_dac_map: {}                       # Trane Tracer SC (points named "...|dac-N"):
+                                       #   3001: {1: "AHU-3", 2: "AHU-4"}
+  targets: []                          # controllers to enumerate; empty = every one above
+
+# ── Storage ─────────────────────────────────────────────────────────────────────────────────
+storage:
+  path: "data/hvactrend.db"            # SQLite; about 35 MB a day per 1,000 logged points
+  schema_file: "db/schema.sql"
+  rollups:
+    enabled: true                      # 5-minute and hourly averages for wide charts
+  retention:
+    raw_days: 365                      # every 2-minute reading, for a year
+    rollup_5m_days: 365
+    rollup_1h_days: null               # null = keep the hourly averages for ever
+    poll_health_days: 30               # per-controller poll diagnostics
+    alerts_days: 180                   # resolved alerts
+  maintenance_interval_s: 3600         # build rollups and prune, this often
+  snapshot_interval_s: 86400           # daily zip of config/ (never secrets.env); 0 = off
+  backup:
+    enabled: true
+    interval_s: 604800                 # a full, verified copy of the database every week
+    dir: "data/backups"
+    keep: 4                            # each copy is a full database: size against free disk
+    # A folder that syncs off this computer (OneDrive, Google Drive, a NAS share) for a
+    # compressed copy of each verified backup. "" = none (the morning check-in says so).
+    # Never point a sync tool at data/ itself: it would copy the live database mid-write.
+    offsite_dir: ""
+    offsite_keep: 2
+
+# ── Weather ─────────────────────────────────────────────────────────────────────────────────
+# Outdoor conditions for the charts, the exports and the AI summary. Open-Meteo is free and
+# needs no key: set the building's coordinates. A WeatherFlow Tempest station on site can be
+# used instead (its token goes on the Settings page).
+weather:
+  refresh_interval_s: 3600             # 0 = off
+  open_meteo:
+    enabled: false
+    latitude: null                     # e.g. 39.78
+    longitude: null                    # e.g. -89.65
+  tempest:
+    enabled: false
+    mode: "cloud"
+    cloud:
+      station_id: null
+  derived: {wet_bulb: true, dew_point: true, enthalpy: true}
+
+# ── Alarm rules ─────────────────────────────────────────────────────────────────────────────
+# Rule-based alarms evaluated every 5 minutes by the watchdog: discharge air not meeting its
+# setpoint, duct static under setpoint, a boiler enabled but not heating, impossible sensor
+# readings, a controller's own alarm points. Each opens an incident; CRITICAL and ACTION
+# incidents can go to your phone (see `alerts`). Defaults and how to tune them:
+# docs/alerts.md. Replay a change against your own history before relying on it:
+#     python scripts/rules_backtest.py --days 30 --list
+rules:
+  enabled: true
+  push_critical: true                  # CRITICAL to the phone at once (once a topic is set)
+  push_action: false                   # ACTION too, as a normal notification: switch on
+                                       # after replaying a month (rules_backtest.py)
+  overrides: {}                        # per unit, e.g. AHU-2: {static-setpoint: {tiers: {action: null}}}
+
+# ── Phone notifications and the watchdog ────────────────────────────────────────────────────
+# The watchdog (scripts/watchdog.py, every 5 minutes, separate from the server) sends phone
+# notifications through ntfy (https://ntfy.sh, free, no account): data stopped, a controller
+# not answering, equipment alarms, a daily check-in and a daily reminder of alarms still on.
+# Generate the private topic on the Settings page. No topic = nothing is sent anywhere.
+alerts:
+  enabled: false                       # the old statistical pre-screen: leave off
+  stale_after_s: 900                   # no new readings for this long -> "data stopped"
+  device_stale_after_s: 1800           # one controller silent this long -> "not responding"
+  poll_failed_hold_s: 240              # a failed poll is sent only if still failing next run
+  checkin: true                        # a morning summary: also proof the box is alive
+  checkin_time: "07:00"                # local time
+  reminders: true                      # one push a day listing alarms on for over a day
+  reminder_time: "12:00"
+  ntfy_server: "https://ntfy.sh"       # or your own ntfy server
+
+# ── Site knowledge ──────────────────────────────────────────────────────────────────────────
+# Facts about this building's points that the data cannot show. `match` is a glob on the
+# BACnet object name, `systems` a glob (or list) on the unit code; both ignore case.
+site_knowledge:
+  ignore_points: []                    # never offered or counted, e.g.
+                                       #   - {match: "Filter Status*", systems: "AHU-*",
+                                       #      why: "the filter switches are not reliable"}
+  rules_not_possible: []               # e.g. - {rule: filter, systems: "AHU-*", why: "..."}
+  expected_overrides: []               # held on purpose, not an alarm, e.g.
+                                       #   - {match: "DHW Call", systems: "BLR-1", value: "OFF",
+                                       #      why: "domestic hot water is not connected"}
+
+# ── Web pages ───────────────────────────────────────────────────────────────────────────────
+api:
+  host: "127.0.0.1"                    # this computer only. "0.0.0.0" = other computers on
+                                       # the network may open the trend viewer (read-only)
+  port: 8000
+  remote_viewer_only: true             # other computers get the trend viewer and nothing else:
+                                       # no settings, no secrets, no backups, no point selection
+  local_hosts: []                      # extra addresses to treat as "this computer"
+  auth:
+    enabled: false                     # true = changes need the UI token (Settings page)
+
+# ── AI summary (optional) ───────────────────────────────────────────────────────────────────
+# A daily and weekly plain-language summary of what the alarm rules found, written by Claude
+# (Anthropic API; enter the key on the Settings page). It narrates; it does not detect.
+# About 3 USD a month. Needs `pip install ".[ai]"`.
+ai:
+  enabled: false
+  baselines: false                     # the old statistical baselines: nothing reads them
+  providers:
+    claude:
+      model: "claude-opus-5-5"
+      max_tokens: 32000
+      effort: {daily: medium, weekly: high}
+    ollama:                            # a local model instead (experimental)
+      base_url: "http://localhost:11434"
+      model: "qwen2.5:14b"
+  routing:
+    daily: "claude"
+    weekly: "claude"
+  weekly_model_override: null
+  prompts:
+    template_dir: "config/prompts"     # daily.md / weekly.md: edit them to taste
+    daily: null
+    weekly: null
+  findings:
+    autoclose_days: 3
+  retry:
+    attempts: 3
+    backoff_s: 2
+  schedule:
+    daily_time: "06:00"
+    weekly_day: "Mon"
+    weekly_time: "06:30"
+
+# ── Analysis ────────────────────────────────────────────────────────────────────────────────
+analysis:
+  occupancy:                           # the building's usual occupied hours (local)
+    weekday_start: 5
+    weekday_end: 18
+    weekend_occupied: false
+  baseline:
+    rebuild_interval_s: 86400          # re-classify point roles daily (new points appear)
+  limits:
+    from_plant: true                   # use the controllers' own trended limit points
+    alarm_roles: [DAT_HI_LIMIT, MAT_LO_LIMIT, RAT_LO_LIMIT]
+  economizer:
+    enthalpy_changeover: 28.0          # Btu/lb dry air
+    wetbulb_changeover_f: 66.0
+  schedule_detect:                     # "what hours does each unit really run?" (Dashboard)
+    lookback_days: 14
+    occupied_fan_pct: 45.0
+    freeze_fan_pct: 35.0
+    cold_oat_f: 40.0
+    min_samples_per_day: 200
+    cover_from_hour: 4
+    cover_to_hour: 19
+    max_gap_min: 60
+    min_block_min: 30
+    night_from_hour: 0
+    night_to_hour: 4
+    round_to_min: 5
+
+logging:
+  level: "INFO"
+  file: "logs/hvactrend.log"

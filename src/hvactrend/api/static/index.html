@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HVACTrend — Point Selection</title>
+<style>
+  :root {
+    --bg:#0b0e13; --panel:#131922; --panel2:#0f141c; --line:#243044;
+    --fg:#c9d4e3; --dim:#7c8aa0; --accent:#39d353; --accent2:#4aa8ff;
+    --fault:#ff5f56; --amber:#f0b429;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.4 ui-monospace,"Cascadia Code",Consolas,monospace; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:16px; background:var(--panel2); }
+  header h1 { font-size:15px; margin:0; letter-spacing:.5px; color:var(--accent); }
+  header a { color:var(--dim); text-decoration:none; font-size:12px; }
+  header a:hover { color:var(--accent2); }
+  header a.active { color:var(--fg); }
+  header .status { color:var(--dim); font-size:12px; margin-left:auto; }
+  .wrap { display:flex; height:calc(100vh - 43px); }
+  aside { width:230px; border-right:1px solid var(--line); overflow:auto; background:var(--panel2); }
+  aside .sys { padding:8px 14px; cursor:pointer; border-bottom:1px solid #1a212d;
+    display:flex; justify-content:space-between; align-items:baseline; }
+  aside .sys:hover { background:var(--panel); }
+  aside .sys.active { background:#17304a; border-left:3px solid var(--accent2); }
+  aside .sys .code { color:var(--fg); }
+  aside .sys .cnt { color:var(--dim); font-size:11px; }
+  aside .sys .en { color:var(--accent); }
+  main { flex:1; overflow:auto; display:flex; flex-direction:column; }
+  .toolbar { padding:10px 16px; border-bottom:1px solid var(--line); display:flex;
+    gap:10px; align-items:center; flex-wrap:wrap; background:var(--panel2); position:sticky; top:0; z-index:2; }
+  .toolbar input[type=text] { background:var(--bg); border:1px solid var(--line);
+    color:var(--fg); padding:6px 10px; border-radius:4px; min-width:220px; font:inherit; }
+  .toolbar label { color:var(--dim); font-size:12px; display:flex; gap:5px; align-items:center; }
+  button { background:var(--panel); color:var(--fg); border:1px solid var(--line);
+    padding:6px 12px; border-radius:4px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent2); color:#fff; }
+  button.primary { border-color:var(--accent2); color:var(--accent2); }
+  .hint { color:var(--dim); font-size:12px; margin-left:auto; }
+  table { border-collapse:collapse; width:100%; }
+  th,td { text-align:left; padding:5px 10px; border-bottom:1px solid #1a212d; white-space:nowrap; }
+  th { position:sticky; top:0; background:var(--panel); color:var(--dim);
+    font-weight:normal; font-size:12px; border-bottom:1px solid var(--line); }
+  th.sortable { cursor:pointer; user-select:none; }
+  th.sortable:hover { color:var(--fg); }
+  th .arrow { color:var(--accent2); }
+  td.name { white-space:normal; max-width:520px; }
+  tr:hover td { background:#0f1621; }
+  .type { color:var(--dim); font-size:12px; }
+  .units { color:var(--amber); font-size:12px; }
+  .val { font-weight:bold; }
+  .val.good { color:var(--accent); }
+  .val.fault { color:var(--fault); }
+  .val.none { color:var(--dim); }
+  .val.err { color:var(--fault); font-weight:normal; font-size:12px; }
+  td.log { text-align:center; }
+  input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+  .rd { padding:2px 8px; font-size:12px; }
+  .empty { padding:40px; color:var(--dim); text-align:center; }
+  .notestrip { padding:6px 16px; background:#12233a; color:var(--dim); font-size:12px;
+    border-bottom:1px solid var(--line); }
+  .notestrip b { color:var(--accent2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>HVACTrend</h1>
+  <a href="/" class="active">Point Selection</a>
+  <a href="/coverage">Point Coverage</a>
+  <a href="/dashboard">Unit Dashboard</a>
+  <a href="/trends">Trend Viewer</a>
+  <a href="/reports">AI Reports</a>
+  <a href="/settings">Settings</a>
+  <span class="status" id="status">loading…</span>
+</header>
+<div class="wrap">
+  <aside id="systems"></aside>
+  <main>
+    <div class="toolbar">
+      <input type="text" id="search" placeholder="filter points by name… (e.g. discharge)">
+      <label><input type="checkbox" id="loggable"> loggable only</label>
+      <button id="readVisible" class="primary">▶ Read visible values</button>
+      <button id="rebuild" title="Re-classify point roles, so newly enabled points reach the alarm rules, the unit dashboard and the by-metric list">⟳ Rebuild model</button>
+      <span class="hint" id="tblHint"></span>
+    </div>
+    <div class="notestrip" id="rebuildMsg">Changed which points log? Newly enabled points chart immediately, but the alarm
+      rules, the unit dashboard and the by-metric list only see them after a model rebuild (daily, or click <b>⟳ Rebuild model</b>).</div>
+    <div id="table"><div class="empty">Select a unit on the left.</div></div>
+  </main>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+let curSys = null, curPoints = [];
+let sortCol = 'name', sortDir = 1;         // 1 asc, -1 desc
+const liveCache = {};                       // point id -> {text, cls} (survives re-sort)
+
+const COLS = [
+  {key:'enabled', label:'log', num:true},
+  {key:'name',    label:'name'},
+  {key:'object_type', label:'type'},
+  {key:'object_instance', label:'inst', num:true},
+  {key:'units_text', label:'units'},
+];
+
+// ── UI auth token (only needed when api.auth.enabled) ───────────────────────
+// Same sessionStorage key the Settings page writes, so setting it there covers this
+// tab too. Per-TAB by design — the token is never persisted to disk.
+const TOKKEY='hvactrend_ui_token';
+function authHeaders(){const t=sessionStorage.getItem(TOKKEY)||'';return t?{'Authorization':'Bearer '+t}:{};}
+function authBar(show){
+  let b=document.getElementById('authbar');
+  if(!b){
+    b=document.createElement('div'); b.id='authbar';
+    b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;display:flex;gap:8px;align-items:center;'
+      +'padding:8px 12px;font:13px system-ui;background:#3a2a12;color:#f0b429;border-bottom:1px solid #7a5a20';
+    b.innerHTML='<span>This server requires an auth token (api.auth is on).</span>'
+      +'<input id="authtok" type="password" autocomplete="off" placeholder="UI auth token" style="flex:0 1 260px;padding:4px 6px">'
+      +'<button id="authuse">Use token</button><button id="authx" title="dismiss">&#10005;</button>';
+    document.body.appendChild(b);
+    b.querySelector('#authuse').onclick=()=>{const v=b.querySelector('#authtok').value;
+      if(v){sessionStorage.setItem(TOKKEY,v); location.reload();}};
+    b.querySelector('#authx').onclick=()=>{b.style.display='none';};
+  }
+  b.style.display=show?'flex':'none';
+}
+async function j(url, opts) {
+  opts=opts||{};
+  const headers=Object.assign({},opts.headers||{},authHeaders());
+  const r = await fetch(url, Object.assign({},opts,{headers}));
+  if(r.status===401||r.status===503) authBar(true);
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+  return r.json();
+}
+function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+function esc(s){ return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function loadSystems() {
+  const {systems} = await j('/api/systems');
+  // /health now answers 503 while collection is not running. The shared j() helper
+  // throws on any non-2xx (and raises the auth-token bar on a 503), so read the body
+  // directly: a degraded recorder must SHOW as degraded, not blank the page.
+  const h = await fetch('/health').then(r=>r.json()).catch(()=>({}));
+  $('#status').textContent = `${systems.length} equipment groups · BACnet ${h.bacnet?'online':'OFFLINE (browse-only)'}`
+    + (h.collector_running===false && h.status==='degraded'
+        ? ` · ⚠ COLLECTION NOT RUNNING${h.bind_error?' — '+h.bind_error:''}` : '');
+  $('#systems').innerHTML = systems.map(s =>
+    `<div class="sys" data-id="${s.id}"><span class="code">${esc(s.code)}</span>
+      <span class="cnt">${s.point_count} pts · <span class="en">${s.enabled_count}✓</span></span></div>`
+  ).join('');
+  document.querySelectorAll('.sys').forEach(el =>
+    el.onclick = () => selectSystem(parseInt(el.dataset.id), el));
+}
+
+async function selectSystem(id, el) {
+  curSys = id;
+  document.querySelectorAll('.sys').forEach(e=>e.classList.remove('active'));
+  if(el) el.classList.add('active');
+  await loadPoints();
+}
+
+async function loadPoints() {
+  if(curSys==null) return;
+  const q = $('#search').value.trim();
+  const log = $('#loggable').checked ? '&loggable=true' : '';
+  let d;
+  try { d = await j(`/api/systems/${curSys}/points?q=${encodeURIComponent(q)}${log}`); }
+  catch(e){ $('#table').innerHTML = '<div class="empty">Could not load the points: '
+                                    + esc(e.message) + '</div>'; return; }
+  const {points, count} = d;
+  curPoints = points;
+  $('#tblHint').textContent = `${count} point${count!=1?'s':''}`;
+  render();
+}
+
+function cmp(a, b, col) {
+  let x = a[col.key], y = b[col.key];
+  if (col.num) { x = Number(x)||0; y = Number(y)||0; return x - y; }
+  x = (x||'').toString().toLowerCase(); y = (y||'').toString().toLowerCase();
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+function render() {
+  if(!curPoints.length){ $('#table').innerHTML = '<div class="empty">No matching points.</div>'; return; }
+  const col = COLS.find(c=>c.key===sortCol) || COLS[1];
+  const rows = [...curPoints].sort((a,b)=> cmp(a,b,col)*sortDir);
+  const head = COLS.map(c => {
+    const arr = c.key===sortCol ? `<span class="arrow">${sortDir>0?'▲':'▼'}</span>` : '';
+    return `<th class="sortable" data-col="${c.key}">${c.label} ${arr}</th>`;
+  }).join('') + '<th>live value</th><th></th>';
+  $('#table').innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`;
+  document.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
+    const k = th.dataset.col;
+    if (k===sortCol) sortDir = -sortDir; else { sortCol = k; sortDir = 1; }
+    render();
+  });
+  document.querySelectorAll('input[data-pid]').forEach(cb =>
+    cb.onchange = () => toggleLog(parseInt(cb.dataset.pid), cb.checked));
+  document.querySelectorAll('button[data-read]').forEach(b =>
+    b.onclick = () => readPoints([parseInt(b.dataset.read)]));
+  // restore any live values read before this (re)render
+  for (const id in liveCache) setCell(parseInt(id), liveCache[id].text, liveCache[id].cls);
+}
+
+function rowHtml(p){
+  return `<tr id="pt${p.id}">
+    <td class="log"><input type="checkbox" data-pid="${p.id}" ${p.enabled?'checked':''}></td>
+    <td class="name">${esc(p.name||'(unnamed)')}</td>
+    <td class="type">${p.object_type}</td>
+    <td>${p.object_instance ?? ''}</td>
+    <td class="units">${esc(p.units_text||'')}</td>
+    <td class="val none" id="v${p.id}">—</td>
+    <td><button class="rd" data-read="${p.id}" ${p.loggable?'':'disabled'}>read</button></td>
+  </tr>`;
+}
+
+async function toggleLog(pid, enabled){
+  const p = curPoints.find(x=>x.id===pid); if(p) p.enabled = enabled;
+  try { await post(`/api/points/${pid}/enabled`, {enabled}); }
+  catch(e){ alert('save failed: '+e.message);
+            if(p) p.enabled = !enabled; render(); return; }   // the box shows what is SAVED
+  loadSystems().then(()=>{ const el=document.querySelector(`.sys[data-id="${curSys}"]`); if(el) el.classList.add('active'); });
+}
+
+async function readPoints(ids){
+  ids.forEach(id => setCell(id, '…', 'none'));
+  try {
+    const {results} = await post('/api/points/read', {ids});
+    results.forEach(r => {
+      if(r.error){ setCell(r.id, r.error, 'err'); return; }
+      let disp = r.value_text!=null ? r.value_text
+               : (r.value_num!=null ? (Math.round(r.value_num*100)/100) : '—');
+      if(r.value_text==null && r.value_num!=null && r.units_text) disp += ' '+r.units_text;
+      setCell(r.id, disp, r.quality==='fault' ? 'fault' : (disp==='—'?'none':'good'));
+    });
+  } catch(e){ ids.forEach(id=>setCell(id,'read failed','err')); }
+}
+function setCell(id, text, cls){ liveCache[id]={text,cls}; const c=$('#v'+id); if(c){ c.textContent=text; c.className='val '+cls; } }
+
+$('#readVisible').onclick = () => { if(curPoints.length) readPoints(curPoints.map(p=>p.id)); };
+$('#rebuild').onclick = async () => {
+  const b=$('#rebuild'), msg=$('#rebuildMsg'), old=b.textContent;
+  b.disabled=true; b.textContent='⟳ Rebuilding… (a few seconds)';
+  try {
+    const r = await post('/api/model/rebuild', {});
+    msg.innerHTML = `Model rebuilt: <b>${r.roles.classified}</b> points classified, `
+      + `<b>${r.baselines.points}</b> baseline bands, <b>${r.baselines.corrs}</b> correlations.`;
+  } catch(e){ msg.textContent='Rebuild failed: '+e.message; }
+  finally { b.disabled=false; b.textContent=old; }
+};
+let deb; $('#search').oninput = () => { clearTimeout(deb); deb=setTimeout(loadPoints,250); };
+$('#loggable').onchange = loadPoints;
+
+loadSystems().catch(e => $('#status').textContent='error: '+e.message);
+</script>
+</body>
+</html>

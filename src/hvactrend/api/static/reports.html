@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HVACTrend — AI Reports</title>
+<style>
+  :root {
+    --bg:#0b0e13; --panel:#131922; --panel2:#0f141c; --line:#243044;
+    --fg:#c9d4e3; --dim:#7c8aa0; --accent:#39d353; --accent2:#4aa8ff;
+    --fault:#ff5f56; --amber:#f0b429; --crit:#ff3b30;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); height:100vh;
+    display:flex; flex-direction:column;
+    font:14px/1.5 ui-monospace,"Cascadia Code",Consolas,monospace; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:16px; background:var(--panel2); }
+  header h1 { font-size:15px; margin:0; letter-spacing:.5px; color:var(--accent); }
+  header a { color:var(--dim); text-decoration:none; font-size:12px; }
+  header a:hover { color:var(--accent2); }
+  header a.active { color:var(--fg); }
+  header .status { color:var(--dim); font-size:12px; margin-left:auto; }
+  .wrap { display:flex; flex:1; min-height:0; }
+  aside { width:290px; border-right:1px solid var(--line); overflow:auto;
+    background:var(--panel2); display:flex; flex-direction:column; }
+  .gen { padding:10px 12px; border-bottom:1px solid var(--line); }
+  .gen h2 { font-size:12px; color:var(--dim); margin:0 0 8px; font-weight:normal;
+    text-transform:uppercase; letter-spacing:.5px; }
+  .gen .row { display:flex; gap:8px; }
+  button { background:var(--panel); color:var(--fg); border:1px solid var(--line);
+    padding:6px 12px; border-radius:4px; cursor:pointer; font:inherit; }
+  button:hover:not(:disabled) { border-color:var(--accent2); color:#fff; }
+  button.primary { border-color:var(--accent2); color:var(--accent2); }
+  button:disabled { opacity:.5; cursor:default; }
+  .gen .msg { font-size:11px; color:var(--dim); margin-top:8px; min-height:14px; }
+  .gen .msg.err { color:var(--fault); }
+  .gen .msg.ok { color:var(--accent2); }
+  .oplog .row { margin-bottom:6px; flex-wrap:wrap; }
+  .oplog input, .oplog select { background:var(--panel); color:var(--fg);
+    border:1px solid var(--line); border-radius:4px; padding:4px 6px; font-size:12px; }
+  .oplog .hint { border:1px solid var(--line); border-radius:50%; width:14px; height:14px;
+    display:inline-block; text-align:center; line-height:13px; cursor:help; font-size:10px; }
+  .oplist { margin-top:8px; max-height:210px; overflow-y:auto; }
+  .opitem { position:relative; font-size:11px; padding:5px 20px 5px 7px; margin-bottom:4px;
+    border-left:2px solid var(--line); background:var(--panel); border-radius:0 4px 4px 0; }
+  .opitem.live { border-left-color:var(--accent2); }
+  .opwhen { color:var(--dim); font-size:10px; }
+  .opnow { color:var(--accent2); }
+  .opdel { position:absolute; top:3px; right:3px; background:none; border:none;
+    color:var(--dim); cursor:pointer; font-size:11px; padding:2px 4px; }
+  .opdel:hover { color:var(--fault); }
+  .rlist { flex:1; overflow:auto; }
+  .ritem { padding:8px 12px; border-bottom:1px solid #1a212d; cursor:pointer; }
+  .ritem:hover { background:var(--panel); }
+  .ritem.active { background:#17304a; border-left:3px solid var(--accent2); }
+  .ritem .k { color:var(--fg); text-transform:capitalize; }
+  .ritem .meta { color:var(--dim); font-size:11px; margin-top:2px; }
+  .ritem .badge { font-size:10px; padding:1px 5px; border-radius:8px; border:1px solid var(--line); }
+  .ritem .badge.error { color:var(--fault); border-color:var(--fault); }
+  main { flex:1; overflow:auto; padding:18px 22px; }
+  h2.sec { font-size:13px; color:var(--dim); font-weight:normal; margin:22px 0 8px;
+    text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .rhead { display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; }
+  .rhead .title { font-size:16px; color:var(--accent); text-transform:capitalize; }
+  .rhead .m { color:var(--dim); font-size:12px; }
+  .prose { white-space:pre-wrap; background:var(--panel2); border:1px solid var(--line);
+    border-radius:5px; padding:14px 16px; margin-top:4px; }
+  table { border-collapse:collapse; width:100%; margin-top:4px; }
+  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid #1a212d; vertical-align:top; }
+  th { color:var(--dim); font-weight:normal; font-size:12px; border-bottom:1px solid var(--line); }
+  td.sev { white-space:nowrap; }
+  .pill { font-size:11px; padding:1px 7px; border-radius:9px; border:1px solid; text-transform:uppercase; }
+  .pill.critical { color:var(--crit); border-color:var(--crit); }
+  .pill.high { color:var(--fault); border-color:var(--fault); }
+  .pill.medium { color:var(--amber); border-color:var(--amber); }
+  .pill.low { color:var(--accent2); border-color:var(--accent2); }
+  .pill.info { color:var(--dim); border-color:var(--line); }
+  td .rec { color:var(--dim); font-size:12px; margin-top:3px; }
+  td .ev { color:#6b7a90; font-size:11px; margin-top:3px; }
+  .tf { font-size:10px; padding:1px 6px; border-radius:8px; border:1px solid var(--line);
+    margin-left:6px; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; }
+  .tf.immediate { color:var(--fault); border-color:var(--fault); }
+  .tf.this-week { color:var(--amber); border-color:var(--amber); }
+  .tf.monitor { color:var(--dim); }
+  select { background:var(--bg); color:var(--fg); border:1px solid var(--line);
+    border-radius:4px; font:inherit; font-size:12px; padding:2px 4px; }
+  .track { color:var(--amber); font-size:11px; }
+  .empty { color:var(--dim); padding:30px 0; }
+  .kicker { color:var(--dim); font-size:12px; margin-bottom:10px; }
+  /* "What to look at" action-items panel (deterministic, from the findings) */
+  .actions { background:var(--panel2); border:1px solid var(--line); border-radius:5px;
+    padding:8px 12px; margin-top:4px; }
+  .ai-item { padding:5px 0; border-bottom:1px solid #1a212d; }
+  .ai-item:last-child { border-bottom:none; }
+  .ai-item b { color:var(--fg); font-weight:normal; }
+  .ai-item .pill { margin-right:2px; }
+  .ai-item .rec { color:var(--dim); font-size:12px; margin-top:3px; }
+  .ai-empty, .ai-more { color:var(--dim); font-size:12px; padding:4px 0; }
+  /* between-report alert banner — the proactive "something needs attention NOW" strip */
+  .alertbar { padding:8px 16px; border-bottom:1px solid var(--crit);
+    background:rgba(255,95,86,0.10); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .alertbar .albl { font-size:12px; color:var(--crit); font-weight:bold; text-transform:uppercase;
+    letter-spacing:.5px; white-space:nowrap; }
+  .achip { font-size:11px; padding:2px 8px; border-radius:9px; border:1px solid var(--fault);
+    color:var(--fg); }
+  .achip.critical { border-color:var(--crit); }
+  .achip b { color:var(--amber); font-weight:normal; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HVACTrend</h1>
+  <a href="/">Point Selection</a>
+  <a href="/coverage">Point Coverage</a>
+  <a href="/dashboard">Unit Dashboard</a>
+  <a href="/trends">Trend Viewer</a>
+  <a href="/reports" class="active">AI Reports</a>
+  <a href="/settings">Settings</a>
+  <span class="status" id="status">loading…</span>
+</header>
+<div class="alertbar" id="alertbar" style="display:none"></div>
+<div class="wrap">
+  <aside>
+    <div class="gen">
+      <h2>Generate report</h2>
+      <div class="row">
+        <button class="primary" id="genDaily">▶ Daily (24h)</button>
+        <button id="genWeekly">Weekly (7d)</button>
+      </div>
+      <div class="msg" id="genMsg"></div>
+    </div>
+    <div class="gen oplog">
+      <h2>Operator log <span class="hint" title="Time-bounded notes: these reach the AI only for reports whose window they overlap, so a temporary change doesn't become permanent context.">?</span></h2>
+      <div class="row"><input type="text" id="opTitle" placeholder="e.g. forced AC-9 occupied to air it out" style="flex:1;min-width:150px"></div>
+      <div class="row">
+        <select id="opSys"><option value="">(whole plant)</option></select>
+        <select id="opDur">
+          <option value="7200">2 hours</option>
+          <option value="28800">8 hours</option>
+          <option value="86400" selected>1 day</option>
+          <option value="259200">3 days</option>
+          <option value="604800">1 week</option>
+          <option value="0">point in time</option>
+        </select>
+        <button class="primary" id="opAdd">Log it</button>
+      </div>
+      <div class="msg" id="opMsg"></div>
+      <div class="oplist" id="opList"></div>
+    </div>
+    <div class="rlist" id="rlist"></div>
+  </aside>
+  <main id="main"></main>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+let reports = [], curId = null;
+
+// ── UI auth token (only needed when api.auth.enabled) ───────────────────────
+// Same sessionStorage key the Settings page writes, so setting it there covers this
+// tab too. Per-TAB by design — the token is never persisted to disk.
+const TOKKEY='hvactrend_ui_token';
+function authHeaders(){const t=sessionStorage.getItem(TOKKEY)||'';return t?{'Authorization':'Bearer '+t}:{};}
+function authBar(show){
+  let b=document.getElementById('authbar');
+  if(!b){
+    b=document.createElement('div'); b.id='authbar';
+    b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;display:flex;gap:8px;align-items:center;'
+      +'padding:8px 12px;font:13px system-ui;background:#3a2a12;color:#f0b429;border-bottom:1px solid #7a5a20';
+    b.innerHTML='<span>This server requires an auth token (api.auth is on).</span>'
+      +'<input id="authtok" type="password" autocomplete="off" placeholder="UI auth token" style="flex:0 1 260px;padding:4px 6px">'
+      +'<button id="authuse">Use token</button><button id="authx" title="dismiss">&#10005;</button>';
+    document.body.appendChild(b);
+    b.querySelector('#authuse').onclick=()=>{const v=b.querySelector('#authtok').value;
+      if(v){sessionStorage.setItem(TOKKEY,v); location.reload();}};
+    b.querySelector('#authx').onclick=()=>{b.style.display='none';};
+  }
+  b.style.display=show?'flex':'none';
+}
+async function j(url, opts){
+  opts=opts||{};
+  const headers=Object.assign({},opts.headers||{},authHeaders());
+  const r = await fetch(url, Object.assign({},opts,{headers}));
+  if(r.status===401||r.status===503) authBar(true);
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+  return r.json();
+}
+function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
+function esc(s){ return (s==null?'':s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function ts(e){ return e? new Date(e*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+
+// between-report alerts — active high/critical conditions raised by the continuous check
+async function loadAlerts(){
+  let d; try{ d = await j('/api/alerts'); }catch(e){ return; }
+  const open = d.open||[];
+  const bar = $('#alertbar');
+  if(!open.length){ bar.style.display='none'; return; }
+  const nCrit = open.filter(a=>a.severity==='critical').length;
+  const chips = open.slice(0,8).map(a=>`<span class="achip ${a.severity==='critical'?'critical':''}"
+     title="${esc(a.message)} · since ${ts(a.created_utc)}"><b>${esc(a.system_code||'')}</b> ${esc(a.message)}</span>`).join('');
+  const more = open.length>8 ? `<span class="achip">+${open.length-8} more</span>` : '';
+  bar.innerHTML = `<span class="albl">⚠ ${open.length} active alert${open.length!=1?'s':''}`
+    + `${nCrit?` · ${nCrit} critical`:''}:</span>${chips}${more}`;
+  bar.style.display='flex';
+}
+
+async function loadReports(){
+  const d = await j('/api/reports');
+  reports = d.reports;
+  $('#status').textContent = `${reports.length} report${reports.length!=1?'s':''}`;
+  $('#rlist').innerHTML = reports.length ? reports.map(r=>`
+    <div class="ritem ${r.id===curId?'active':''}" data-id="${r.id}">
+      <div><span class="k">${esc(r.kind)}</span>
+        ${r.status==='error'?'<span class="badge error">error</span>':''}</div>
+      <div class="meta">${ts(r.period_start_utc)} → ${ts(r.period_end_utc)}<br>
+        ${esc(r.model||r.provider||'')} · ${r.finding_count} finding${r.finding_count!=1?'s':''}</div>
+    </div>`).join('') : '<div class="empty" style="padding:14px">No reports yet. Generate one, or preview the deterministic pre-screen →</div>';
+  document.querySelectorAll('.ritem').forEach(el=> el.onclick=()=>openReport(parseInt(el.dataset.id)));
+}
+
+async function openReport(id){
+  curId = id;
+  document.querySelectorAll('.ritem').forEach(e=>e.classList.toggle('active', parseInt(e.dataset.id)===id));
+  let r;
+  try { r = await j('/api/reports/'+id); }
+  catch(e){ $('#main').innerHTML = '<div class="empty">Could not open this report: '
+                                   + esc(e.message) + '</div>'; return; }
+  $('#main').innerHTML = `
+    <div class="rhead">
+      <span class="title">${esc(r.kind)} report</span>
+      <span class="m">${ts(r.period_start_utc)} → ${ts(r.period_end_utc)}</span>
+      <span class="m">${esc(r.provider||'')}${r.model?(' · '+esc(r.model)):''}</span>
+      <span class="m">${esc(r.status)}</span>
+    </div>
+    ${actionItems(r.findings)}
+    <h2 class="sec">Narrative</h2>
+    <div class="prose">${esc(r.prose)||'<span class="empty">(no prose)</span>'}</div>
+    <h2 class="sec">Findings (${r.findings.length})</h2>
+    ${findingsTable(r.findings)}`;
+  wireStatus();
+}
+
+function findingsTable(findings){
+  if(!findings.length) return '<div class="empty">No structured findings.</div>';
+  return `<table><thead><tr><th>sev</th><th>equipment</th><th>finding</th><th>status</th></tr></thead><tbody>${
+    findings.map(f=>{
+      const sev = (f.severity||'info').toLowerCase();
+      const tracked = (f.first_seen_utc && f.last_seen_utc && f.last_seen_utc>f.first_seen_utc)
+        ? `<span class="track" title="tracked since ${ts(f.first_seen_utc)}">↻ recurring since ${ts(f.first_seen_utc)}</span>` : '';
+      const tf = f.timeframe ? `<span class="tf ${esc(f.timeframe)}">${esc(f.timeframe.replace('-',' '))}</span>` : '';
+      return `<tr>
+        <td class="sev"><span class="pill ${sev}">${esc(sev)}</span></td>
+        <td>${esc(f.system_code||f.equipment||'')}<div class="ev">${esc(f.metric||'')}</div></td>
+        <td>${esc(f.summary||'')}${tf}
+          ${f.recommendation?`<div class="rec">→ ${esc(f.recommendation)}</div>`:''}
+          ${f.evidence?`<div class="ev">${esc(f.evidence)}</div>`:''}
+          ${tracked}</td>
+        <td><select data-fid="${f.id}" data-prev="${esc(f.status||'open')}">
+          ${['open','acknowledged','closed'].map(s=>`<option ${f.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+// "What to look at" — a scannable, prioritized action list built PURELY from the
+// structured findings the report already carries (no model-authored field, so it can
+// never be blank/wrong from model misbehavior). Timeframe-first triage order.
+const _TF_RANK = {immediate:3, 'this-week':2, monitor:1};        // missing -> 0
+const _SEV_RANK = {info:0, low:1, medium:2, high:3, critical:4};  // mirrors reports.py _sev_rank
+function actionItems(findings){
+  if(!findings || !findings.length) return '';   // error reports / clean runs -> no panel
+  const open = findings.filter(f => (f.status||'open')==='open');
+  // actionable = needs attention now/this week, OR medium+ severity (so a high/critical
+  // finding with a MISSING timeframe is never silently dropped)
+  const act = open.filter(f => f.timeframe==='immediate' || f.timeframe==='this-week'
+      || (_SEV_RANK[(f.severity||'info').toLowerCase()]??0) >= _SEV_RANK.medium);
+  const header = `<h2 class="sec">What to look at (${act.length})</h2>`;
+  if(!act.length) return header +
+    `<div class="actions"><div class="ai-empty">No immediate action items — review findings below.</div></div>`;
+  act.sort((a,b) =>
+    (_TF_RANK[b.timeframe]||0)-(_TF_RANK[a.timeframe]||0)
+    || (_SEV_RANK[(b.severity||'info').toLowerCase()]||0)-(_SEV_RANK[(a.severity||'info').toLowerCase()]||0));
+  const CAP=6, shown=act.slice(0,CAP), more=act.length-shown.length;
+  const rows = shown.map(f => {
+    const sev=(f.severity||'info').toLowerCase(); const sevCls = sev in _SEV_RANK ? sev : 'info';
+    const tfCls = f.timeframe in _TF_RANK ? f.timeframe : ''; const tfLbl = tfCls ? tfCls.replace('-',' ') : '';
+    const eq = esc(f.system_code||f.equipment||'');
+    const rec = f.recommendation ? `<div class="rec">→ ${esc(f.recommendation)}</div>` : '';
+    const trk = (f.first_seen_utc && f.last_seen_utc && f.last_seen_utc>f.first_seen_utc)
+      ? `<span class="track" title="tracked since ${ts(f.first_seen_utc)}">↻ recurring since ${ts(f.first_seen_utc)}</span>` : '';
+    return `<div class="ai-item"><span class="pill ${sevCls}">${esc(sev)}</span>`
+      + `${tfCls?`<span class="tf ${tfCls}">${esc(tfLbl)}</span>`:''} <b>${eq}</b> — ${esc(f.summary||'')} ${trk}${rec}</div>`;
+  }).join('');
+  const tail = more>0 ? `<div class="ai-more">+${more} more in findings below</div>` : '';
+  return header + `<div class="actions">${rows}${tail}</div>`;
+}
+
+function wireStatus(){
+  document.querySelectorAll('select[data-fid]').forEach(sel=>
+    sel.onchange=async()=>{
+      let note=null;
+      if(sel.value==='acknowledged'){
+        // The WHY is the point. Without it, acknowledging is just a mute button and the
+        // AI is told nothing — so it can rediscover the same condition cold next run.
+        note=prompt('Acknowledging this finding — why is it expected?\n\n'
+          +'e.g. "I raised min OA to 35% manually to test IAQ"\n\n'
+          +'This is sent to the AI as ground truth: it stops reporting the action as a '
+          +'fault, but still reports its consequences.');
+        if(note===null){ sel.value=sel.dataset.prev||'open'; return; }   // cancelled
+      }
+      try{ await post(`/api/findings/${sel.dataset.fid}/status`, {status:sel.value, note:note});
+           sel.dataset.prev=sel.value; }
+      catch(e){ alert('save failed: '+e.message); }
+    });
+}
+
+// ── operator log: time-bounded records of deliberate changes ────────────────
+async function loadOpLog(){
+  let d; try{ d=await j('/api/annotations?limit=12'); }catch(e){ return; }
+  const a=d.annotations||[];
+  $('#opList').innerHTML = a.length ? a.map(x=>{
+    const s=new Date(x.ts_utc*1000), e=x.ts_end_utc?new Date(x.ts_end_utc*1000):null;
+    const opts={month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'};
+    const when = e ? s.toLocaleString([],opts)+' → '+(e.toDateString()===s.toDateString()
+        ? e.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : e.toLocaleString([],opts))
+      : s.toLocaleString([],opts);
+    const live = (!e || e>new Date()) && s<=new Date();
+    return `<div class="opitem${live?' live':''}">
+      <div class="opwhen">${esc(when)}${live?' <span class="opnow">active</span>':''}</div>
+      <div>${x.system_code?`<b>${esc(x.system_code)}</b> `:''}${esc(x.title)}</div>
+      <button class="opdel" data-del="${x.id}" title="delete">✕</button></div>`;
+  }).join('') : '<div class="empty" style="padding:6px 0">Nothing logged yet.</div>';
+  $('#opList').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Delete this log entry?')) return;
+    try{ await j('/api/annotations/'+b.dataset.del,{method:'DELETE'}); loadOpLog(); }
+    catch(e){ alert('delete failed: '+e.message); }
+  });
+}
+
+async function initOpLog(){
+  try{ const d=await j('/api/systems');
+    $('#opSys').innerHTML='<option value="">(whole plant)</option>'
+      + (d.systems||[]).map(s=>`<option value="${s.id}">${esc(s.code)}</option>`).join('');
+  }catch(e){}
+  $('#opAdd').onclick=async()=>{
+    const t=$('#opTitle').value.trim(), msg=$('#opMsg');
+    if(!t){ msg.textContent='enter what you did'; msg.className='msg err'; return; }
+    const now=Math.floor(Date.now()/1000), dur=parseInt($('#opDur').value,10);
+    const sid=$('#opSys').value;
+    try{
+      await post('/api/annotations',{title:t, ts_utc:now, ts_end_utc:dur?now+dur:null,
+                                     system_id:sid?parseInt(sid,10):null});
+      $('#opTitle').value=''; msg.textContent='logged'; msg.className='msg ok';
+      setTimeout(()=>{msg.textContent='';},1500); loadOpLog();
+    }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+  };
+  loadOpLog();
+}
+
+function showEmpty(){
+  $('#main').innerHTML = `<div class="empty">No summaries yet. The daily summary is written at
+    06:00 and the weekly one on Mondays at 06:30, or use the buttons on the left.</div>`;
+}
+
+async function gen(kind, btn){
+  const msg=$('#genMsg'); msg.className='msg'; msg.textContent=`Generating ${kind}… (calling Claude, may take ~20s)`;
+  document.querySelectorAll('.gen button').forEach(b=>b.disabled=true);
+  try{
+    const r = await post('/api/reports/generate', {kind});
+    if(r.status==='error'){ msg.className='msg err'; msg.textContent='Provider error: '+(r.error||'unknown')+' — check the key on the Settings page.'; }
+    else { const res = r.resolved_count?`, ${r.resolved_count} resolved`:'';
+      const drop = r.dropped?`, ${r.dropped} left out (cited nothing found)`:'';
+      msg.textContent=`Done: ${r.finding_count} action${r.finding_count===1?'':'s'}${drop}${res}.`; }
+    await loadReports();
+    if(r.report_id) openReport(r.report_id);
+  }catch(e){ msg.className='msg err'; msg.textContent='Failed: '+e.message; }
+  finally{ document.querySelectorAll('.gen button').forEach(b=>b.disabled=false); }
+}
+
+$('#genDaily').onclick = e => gen('daily', e.target);
+$('#genWeekly').onclick = e => gen('weekly', e.target);
+
+loadAlerts();
+initOpLog();
+setInterval(loadAlerts, 60000);   // refresh the alert banner every minute
+loadReports().then(()=>{ if(!reports.length) showEmpty(); else openReport(reports[0].id); })
+  .catch(e=> $('#status').textContent='error: '+e.message);
+</script>
+</body>
+</html>

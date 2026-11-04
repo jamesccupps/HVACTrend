@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HVACTrend — Settings</title>
+<style>
+  :root{--bg:#0b0e13;--panel:#131922;--panel2:#0f141c;--line:#243044;--fg:#c9d4e3;
+    --dim:#7c8aa0;--accent:#39d353;--accent2:#4aa8ff;--fault:#ff5f56;--amber:#f0b429;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.4 ui-monospace,"Cascadia Code",Consolas,monospace;}
+  header{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;gap:16px;background:var(--panel2);}
+  header h1{font-size:15px;margin:0;letter-spacing:.5px;color:var(--accent);}
+  header a{color:var(--dim);text-decoration:none;font-size:12px;}
+  header a:hover{color:var(--accent2);} header a.active{color:var(--fg);}
+  header .status{color:var(--dim);font-size:12px;margin-left:auto;}
+  main{max-width:920px;margin:0 auto;padding:20px 16px 60px;}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:6px;margin:0 0 18px;}
+  .card h2{font-size:13px;margin:0;padding:11px 16px;border-bottom:1px solid var(--line);
+    color:var(--accent2);letter-spacing:.5px;}
+  .card .body{padding:14px 16px;}
+  .topicbox{margin:10px 0 4px;padding:10px 12px;border:1px solid var(--amber);border-radius:4px;
+    background:var(--bg);font-size:13px;}
+  .topicbox .topic{font-size:18px;letter-spacing:1px;color:var(--amber);margin:8px 0;
+    word-break:break-all;user-select:all;}
+  .row{display:flex;gap:12px;align-items:center;padding:5px 0;flex-wrap:wrap;}
+  .row label{color:var(--dim);min-width:250px;font-size:12px;word-break:break-all;}
+  input[type=text],input[type=password],input[type=number]{background:var(--bg);
+    border:1px solid var(--line);color:var(--fg);padding:6px 10px;border-radius:4px;
+    font:inherit;min-width:280px;}
+  input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;}
+  button{background:var(--panel);color:var(--fg);border:1px solid var(--line);
+    padding:6px 12px;border-radius:4px;cursor:pointer;font:inherit;}
+  button:hover{border-color:var(--accent2);color:#fff;}
+  button.primary{border-color:var(--accent2);color:var(--accent2);}
+  button.danger{border-color:var(--fault);color:var(--fault);}
+  button.link{border:none;background:none;color:var(--accent2);padding:0;font-size:12px;text-decoration:underline;}
+  .pill{font-size:11px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);}
+  .pill.set{color:var(--accent);border-color:var(--accent);}
+  .pill.unset{color:var(--amber);border-color:var(--amber);}
+  .pill.ovr{color:var(--accent2);border-color:var(--accent2);}
+  .note{color:var(--dim);font-size:12px;padding:4px 0;} .note b{color:var(--accent2);}
+  .warn{background:#2a1a12;border:1px solid #6b3f1f;color:var(--amber);padding:8px 12px;
+    border-radius:5px;font-size:12px;margin-bottom:14px;}
+  table{border-collapse:collapse;width:100%;margin-top:8px;}
+  td,th{text-align:left;padding:5px 8px;border-bottom:1px solid #1a212d;font-size:12px;}
+  th{color:var(--dim);font-weight:normal;} td a{color:var(--accent2);}
+  .msg{font-size:12px;margin-left:8px;} .msg.ok{color:var(--accent);} .msg.err{color:var(--fault);}
+  .grp h3{font-size:12px;color:var(--amber);margin:14px 0 4px;text-transform:uppercase;letter-spacing:.5px;}
+  .unitrow{padding:8px 0;border-bottom:1px solid #1a212d;}
+  .uhead{font-size:13px;margin-bottom:3px;} .uhead b{color:var(--accent2);}
+</style>
+</head>
+<body>
+<header>
+  <h1>HVACTrend</h1>
+  <a href="/">Point Selection</a>
+  <a href="/coverage">Point Coverage</a>
+  <a href="/dashboard">Unit Dashboard</a>
+  <a href="/trends">Trend Viewer</a>
+  <a href="/reports">AI Reports</a>
+  <a href="/settings" class="active">Settings</a>
+  <span class="status" id="status">loading…</span>
+</header>
+<main>
+  <div class="warn" id="authwarn" style="display:none"></div>
+
+  <div class="card">
+    <h2>ACCESS</h2>
+    <div class="body">
+      <div class="row">
+        <label>UI auth token</label>
+        <input type="password" id="uiToken" autocomplete="off" placeholder="only if api.auth is enabled (HVACTREND_UI_TOKEN)">
+        <button id="saveTok">Use token</button>
+        <span class="msg" id="tokMsg"></span>
+      </div>
+      <div class="note">Leave blank when auth is off (the default). Held only in this browser tab (sessionStorage), never persisted.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>API KEYS &amp; TOKENS</h2>
+    <div class="body" id="secrets">
+      <div class="note">Keys are stored in a gitignored <b>config/secrets.env</b> and loaded into the
+        server environment — only the last 4 characters are ever shown. Saving applies <b>immediately</b>.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>ALERTS &rarr; YOUR PHONE (ntfy)</h2>
+    <div class="body">
+      <div class="note">The <b>watchdog</b> (its own scheduled task, every 5 minutes, independent of this
+        server) sends a phone notification when data stops, a controller stops answering or poll cycles keep
+        failing; an all-clear when each one resolves; and a quiet <b>daily check-in</b> each morning. If a
+        check-in ever fails to arrive, the box itself is down.</div>
+      <div class="note">Notifications go through <b>ntfy</b>, a free push app with no account. Your phone
+        subscribes to a private <b>topic</b>. Anyone who knows the topic can read these alerts, so it is long
+        and random, it is stored with the API keys, and it is shown in full only once, when you generate it.
+        With no topic set, nothing is sent anywhere.</div>
+      <div class="note">Already made a topic in the ntfy app? Paste it, or its ntfy.sh link, into
+        <b>ntfy topic (phone alerts)</b> under API keys &amp; tokens above, click <b>Save</b>, then
+        <b>Send test message</b> here.</div>
+      <div class="row"><label>Delivery</label><span id="nfState" class="pill unset">&mdash;</span></div>
+      <div class="row"><label>Last delivered</label><span id="nfOk">&mdash;</span></div>
+      <div class="row"><label>Last failure</label><span id="nfErr">&mdash;</span></div>
+      <div class="row"><label>Today's check-in</label><span id="nfCheckin">&mdash;</span></div>
+      <div class="row"><label>Today's alarm reminder</label><span id="nfRemind">&mdash;</span></div>
+      <div class="row">
+        <button id="nfGen">Generate a private topic</button>
+        <button class="primary" id="nfTest">Send test message</button>
+        <span class="msg" id="nfMsg"></span>
+      </div>
+      <div class="topicbox" id="nfTopic" style="display:none"></div>
+      <details class="note">
+        <summary>Setting up your phone (about 2 minutes)</summary>
+        <ol>
+          <li>Install <b>ntfy</b> from the App Store or Google Play.</li>
+          <li>Click <b>Generate a private topic</b> above, and keep this page open.</li>
+          <li>In the app, tap <b>+</b> to subscribe, type the topic exactly as shown, leave the server as
+            ntfy.sh, and subscribe.</li>
+          <li>Click <b>Send test message</b>. It should arrive within seconds.</li>
+        </ol>
+      </details>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>UNITS &amp; OCCUPANCY <span class="pill set">AI context</span></h2>
+    <div class="body">
+      <div class="note">Ground-truth context for the AI, so anomaly detection stays accurate.
+        Mark a unit <b>Vacant</b> and its idle equipment (fans off, no airflow, off setpoint) is treated as
+        <b>expected</b> — not a fault — while genuine sensor faults / comm loss are still reported. The
+        <b>note</b> is free text the AI reads per unit (e.g. “Floor 8 duct issue when both fans run”).
+        Saved to the database; picked up on the next report.</div>
+      <div class="note"><b>Occupied hours</b> default to the building schedule. Because start times are
+        staggered per floor (and weekends differ), you can give a unit its own hours —
+        <b>🔍 Detect from data</b> reads each unit's own Occupancy Status point (or fan speed, ignoring
+        cold-weather freeze circulation) and proposes real hours for you to apply. Days without enough
+        logged coverage are reported as <i>insufficient</i> rather than guessed.</div>
+      <div class="row">
+        <button id="detectSched">🔍 Detect from data</button>
+        <span class="msg" id="detectMsg"></span>
+      </div>
+      <div id="units"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>EQUIPMENT &amp; SEQUENCE OF OPERATIONS <span class="pill set">AI context</span></h2>
+    <div class="body">
+      <div class="note">What each unit actually <b>is</b> — the AI reads this with every report, so it can
+        judge behavior against real equipment instead of assuming. Setting <b>heating type = none</b> also
+        stops the heat-related checks firing on a cooling-only unit. The <b>sequence of operations</b> is
+        the highest-value field: with it the AI compares observed behavior to <b>designed intent</b>.
+        Everything here is editable at any time — change a value and Save, or clear a field to remove it.</div>
+      <div class="row"><select id="eqUnit"></select>
+        <span class="msg" id="eqMsg"></span></div>
+      <div id="eqForm"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>BACKUPS</h2>
+    <div class="body">
+      <div class="row">
+        <button class="primary" id="runBackup">⤓ Run backup now</button>
+        <span class="msg" id="backupMsg"></span>
+      </div>
+      <div class="note">Online snapshot of the live database (safe while collecting). Older backups are
+        pruned to <b>storage.backup.keep</b>.</div>
+      <table id="backupList"><thead><tr><th>file</th><th>size</th><th>when</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>SETTINGS</h2>
+    <div class="body">
+      <div class="note">Editable configuration. BACnet identity, the read-only safety posture, and the auth
+        settings are intentionally <b>not</b> editable here. Changes save to the database and apply on the
+        next <b>server restart</b>. A <span class="pill ovr">db override</span> tag marks values changed from the config file.</div>
+      <div id="settings"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="saveSettings">Save changed settings</button>
+        <span class="msg" id="settingsMsg"></span>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtBytes=b=>b==null?'—':(b>1e9?(b/1e9).toFixed(2)+' GB':b>1e6?(b/1e6).toFixed(1)+' MB':(b/1e3).toFixed(0)+' KB');
+const fmtTime=u=>u?new Date(u*1000).toLocaleString():'—';
+let effInit={};
+
+const TOKKEY='hvactrend_ui_token';
+const getTok=()=>sessionStorage.getItem(TOKKEY)||'';
+function authHeaders(){const t=getTok();return t?{'Authorization':'Bearer '+t}:{};}
+function showAuthWarn(on){const w=$('#authwarn');
+  if(on){w.textContent='This server requires an auth token. Enter the UI auth token (HVACTREND_UI_TOKEN) above and click “Use token”.';w.style.display='block';}
+  else{w.style.display='none';}}
+
+async function api(path,opts){
+  opts=opts||{};
+  const headers=Object.assign({},opts.headers||{},authHeaders());
+  const r=await fetch(path,Object.assign({},opts,{headers}));
+  if(r.status===401){showAuthWarn(true);}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+  return j;
+}
+
+$('#saveTok').onclick=()=>{const v=$('#uiToken').value;
+  if(v) sessionStorage.setItem(TOKKEY,v); else sessionStorage.removeItem(TOKKEY);
+  $('#uiToken').value=''; $('#tokMsg').textContent=v?'token set for this tab':'token cleared'; $('#tokMsg').className='msg ok';
+  showAuthWarn(false); load().catch(()=>{});
+};
+
+async function load(){
+  const s=await api('/api/settings');
+  showAuthWarn(false);
+  $('#status').textContent=s.note||'';
+  renderSecrets(s.secrets||{});
+  renderNotify(s.notify);
+  renderSettings(s.effective||{}, s.overrides||[]);
+  loadUnits();
+  loadEquipment();
+  loadBackups();
+}
+
+const OCC_MODES=[['scheduled','Scheduled (building hours)'],['vacant','Vacant / unoccupied'],['always','Always occupied (24/7)']];
+const DAYK=['mon','tue','wed','thu','fri','sat','sun'];
+let DETECTED={};                       // system_id -> detection result
+const hhmm=m=>m==null?'--:--':String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+
+function schedSummary(js){
+  if(!js) return 'building default';
+  let o; try{ o=(typeof js==='string')?JSON.parse(js):js; }catch(e){ return 'invalid'; }
+  const parts=DAYK.filter(d=>d in o).map(d=> o[d]===null?`${d} off`:`${d} ${hhmm(o[d][0])}-${hhmm(o[d][1])}`);
+  return parts.length?parts.join(' · '):'building default';
+}
+function detectSummary(det){
+  if(!det) return '';
+  const wk=DAYK.slice(0,5).map(d=>det.days[d]).filter(v=>v&&v.start_min!=null);
+  if(!wk.length) return 'no usable weekday coverage yet';
+  const s=Math.min(...wk.map(v=>v.start_min)), e=Math.max(...wk.map(v=>v.end_min));
+  const obs=Math.max(...wk.map(v=>v.observed_days||0));
+  return `detected ~${hhmm(s)}-${hhmm(e)} · ${wk[0].confidence} (${obs}d, ${det.signal})`;
+}
+function schedFromDetect(det){        // insufficient days are omitted -> inherit default
+  const out={};
+  for(const d of DAYK){ const v=det.days[d];
+    if(!v||v.insufficient) continue;
+    out[d]= v.unoccupied? null : [v.start_min, v.end_min];
+  }
+  return out;
+}
+$('#detectSched').onclick=async()=>{
+  const msg=$('#detectMsg'); msg.textContent='reading history…'; msg.className='msg';
+  try{
+    const d=await api('/api/systems/schedule-detect?days=14');
+    DETECTED={}; (d.systems||[]).forEach(s=>DETECTED[s.system_id]=s);
+    msg.textContent=`analyzed ${d.systems.length} units over ${d.lookback_days}d — review and Apply per unit`;
+    msg.className='msg ok'; loadUnits();
+  }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+};
+async function loadUnits(){
+  try{ const d=await api('/api/systems'); renderUnits(d.systems||[]); }
+  catch(e){ $('#units').innerHTML='<div class="note">'+esc(e.message)+'</div>'; }
+}
+function renderUnits(systems){
+  const box=$('#units'); box.innerHTML='';
+  if(!systems.length){ box.innerHTML='<div class="note">No units found.</div>'; return; }
+  for(const s of systems){
+    const mode=(s.occupancy_mode||'scheduled');
+    const det=DETECTED[s.id];
+    const row=document.createElement('div'); row.className='unitrow';
+    row.innerHTML=`<div class="uhead"><b>${esc(s.code)}</b>${s.name&&s.name!==s.code?' — '+esc(s.name):''}
+        <span class="pill ${mode==='vacant'?'unset':'set'}" data-pill="${s.id}">${esc(mode)}</span></div>
+      <div class="row">
+        <select data-occ="${s.id}">${OCC_MODES.map(m=>`<option value="${m[0]}"${m[0]===mode?' selected':''}>${esc(m[1])}</option>`).join('')}</select>
+        <input type="text" data-note="${s.id}" value="${esc(s.notes||'')}" placeholder="operator note for the AI (optional)" style="flex:1;min-width:180px">
+        <button class="primary" data-savecx="${s.id}">Save</button>
+        <span class="msg" data-cxmsg="${s.id}"></span>
+      </div>
+      <div class="row" style="font-size:12px;color:var(--dim)">
+        <span>hours: <b style="color:var(--fg)">${esc(schedSummary(s.occ_schedule))}</b></span>
+        ${det?`<span style="color:var(--accent2)">${esc(detectSummary(det))}</span>
+               <button data-applysched="${s.id}">Apply detected</button>`:''}
+        ${s.occ_schedule?`<button data-clearsched="${s.id}">Reset to default</button>`:''}
+        <span class="msg" data-schedmsg="${s.id}"></span>
+      </div>`;
+    box.appendChild(row);
+  }
+  box.querySelectorAll('[data-applysched]').forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.applysched, msg=box.querySelector(`[data-schedmsg="${id}"]`);
+    const det=DETECTED[id]||DETECTED[Number(id)];
+    if(!det){ msg.textContent='no detection'; msg.className='msg err'; return; }
+    const sched=schedFromDetect(det);
+    if(!Object.keys(sched).length){ msg.textContent='nothing usable detected yet'; msg.className='msg err'; return; }
+    try{
+      await api('/api/systems/'+id+'/context',{method:'PUT',headers:{'content-type':'application/json'},
+        body:JSON.stringify({occ_schedule:sched})});
+      msg.textContent='applied'; msg.className='msg ok'; loadUnits();
+    }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+  });
+  box.querySelectorAll('[data-clearsched]').forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.clearsched, msg=box.querySelector(`[data-schedmsg="${id}"]`);
+    try{
+      await api('/api/systems/'+id+'/context',{method:'PUT',headers:{'content-type':'application/json'},
+        body:JSON.stringify({occ_schedule:{}})});
+      msg.textContent='reset'; msg.className='msg ok'; loadUnits();
+    }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+  });
+  box.querySelectorAll('[data-savecx]').forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.savecx, msg=box.querySelector(`[data-cxmsg="${id}"]`);
+    const mode=box.querySelector(`[data-occ="${id}"]`).value;
+    const note=box.querySelector(`[data-note="${id}"]`).value;
+    try{
+      await api('/api/systems/'+id+'/context',{method:'PUT',headers:{'content-type':'application/json'},
+        body:JSON.stringify({occupancy_mode:mode, notes:note})});
+      msg.textContent='saved'; msg.className='msg ok';
+      const pill=box.querySelector(`[data-pill="${id}"]`); if(pill){pill.textContent=mode; pill.className='pill '+(mode==='vacant'?'unset':'set');}
+      setTimeout(()=>{msg.textContent='';},1500);
+    }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+  });
+}
+
+const SECRET_LABELS={anthropic_api_key:'Anthropic API key (Claude)', tempest_token:'Tempest token (WeatherFlow cloud)',
+  ui_token:'UI auth token (set this BEFORE enabling api.auth)',
+  ntfy_topic:'ntfy topic (phone alerts)'};
+
+// ── alerts -> phone (ntfy): delivery state written by the watchdog (app_meta) ──
+const localISO=()=>{const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+let NF={};
+function renderNotify(n){
+  n=n||{}; NF=n;
+  const st=$('#nfState');
+  st.textContent=n.configured?'on — the watchdog sends to your phone':'off — no topic set, nothing is sent';
+  st.className='pill '+(n.configured?'set':'unset');
+  $('#nfOk').textContent=n.last_ok_utc?fmtTime(n.last_ok_utc)+' ('+(n.last_ok_kind||'')+')':'—';
+  const failing=!!n.last_error_utc && (!n.last_ok_utc || n.last_error_utc>n.last_ok_utc);
+  const err=$('#nfErr');
+  err.textContent=n.last_error_utc?fmtTime(n.last_error_utc)+' — '+(n.last_error||''):'—';
+  err.className=failing?'msg err':'';
+  $('#nfCheckin').textContent=!n.checkin?'switched off (alerts.checkin)':
+    (n.checkin_date===localISO()?'sent':(n.configured?'not yet — goes at the first watchdog run after '+(n.checkin_time||'07:00'):'—'));
+  const rc=n.reminder_count||0;
+  $('#nfRemind').textContent=!n.reminders?'switched off (alerts.reminders)':
+    (n.reminder_date===localISO()?(rc?`sent — ${rc} alarm${rc===1?'':'s'} still on`:'nothing to remind (no alarm on for a day)'):
+     (n.configured?'not yet — at the first watchdog run after '+(n.reminder_time||'12:00')+', if an alarm has been on for a day':'—'));
+  $('#nfTest').disabled=!n.configured;
+  $('#nfGen').textContent=n.configured?'Replace the topic':'Generate a private topic';
+}
+// Accept a topic, or the whole https://ntfy.sh/<topic> link the ntfy app shows (the operator pasted
+// exactly that on 2026-09-29, and the bare-topic check would have refused it). The link's
+// server must be the one alerts are sent to, or the phone would be listening somewhere else.
+function ntfyTopicFrom(v, server){
+  v=String(v||'').trim();
+  let t=v, host=null;
+  if(/^https?:/i.test(v)){
+    try{ const u=new URL(v); host=u.host; t=u.pathname.replace(/^[/]+|[/]+$/g,''); }
+    catch(e){ return {err:'that link could not be read'}; }
+  }
+  if(!/^[-_A-Za-z0-9]{12,64}$/.test(t)) return {err:'an ntfy topic is 12-64 letters, digits, - or _'};
+  if(host && server){
+    let want=null; try{ want=new URL(server).host; }catch(e){}
+    if(want && want!==host) return {err:'that topic is on '+host+', but alerts are sent to '+want+' (alerts.ntfy_server in config.yaml)'};
+  }
+  return {topic:t};
+}
+function newTopic(){
+  // 20 symbols from a 31-character alphabet with no look-alikes (no 0/o, 1/l/i): ~99 bits,
+  // grouped in fours so it can be typed into a phone. Values >= 248 are skipped so every
+  // symbol is equally likely (248 = 8 x 31).
+  const A='23456789abcdefghjkmnpqrstuvwxyz'; let s='';
+  while(s.length<20){
+    const r=new Uint8Array(32); crypto.getRandomValues(r);
+    for(const b of r){ if(b<248 && s.length<20) s+=A[b%31]; }
+  }
+  return 'occ-'+s.match(/.{4}/g).join('-');
+}
+$('#nfGen').onclick=async()=>{
+  const msg=$('#nfMsg');
+  if(NF.configured && !confirm('Replace the current topic? Your phone stops getting alerts until you subscribe it to the new one.')) return;
+  const t=newTopic();
+  try{
+    await api('/api/settings/secrets',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({name:'ntfy_topic',value:t})});
+    const box=$('#nfTopic'); box.style.display='block';
+    box.innerHTML='Subscribe to this topic in the ntfy app, then click <b>Send test message</b>:'
+      +'<div class="topic">'+esc(t)+'</div>'
+      +'Shown only now. Afterwards this page shows just its last 4 characters; the ntfy app on your phone keeps the full name.';
+    msg.textContent='topic saved'; msg.className='msg ok';
+    load().catch(()=>{});
+  }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+};
+$('#nfTest').onclick=async()=>{
+  const msg=$('#nfMsg'); msg.textContent='sending…'; msg.className='msg';
+  try{
+    const r=await api('/api/notify/test',{method:'POST'});
+    msg.textContent=r.ok?'sent ('+r.detail+') — check your phone':'failed: '+r.detail;
+    msg.className='msg '+(r.ok?'ok':'err');
+    renderNotify(r.notify);
+  }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+};
+function renderSecrets(secrets){
+  const box=$('#secrets');
+  box.querySelectorAll('.row').forEach(e=>e.remove());
+  for(const [key,label] of Object.entries(SECRET_LABELS)){
+    const st=secrets[key]||{set:false};
+    const row=document.createElement('div'); row.className='row';
+    row.innerHTML=`<label>${esc(label)}</label>
+      <input type="password" autocomplete="off" data-k="${esc(key)}"
+        placeholder="${st.set?'set — …'+esc(st.last4||'')+' (paste to replace)':'not set — paste to save'}">
+      <button class="primary" data-save="${esc(key)}">Save</button>
+      ${st.set?`<button class="danger" data-clear="${esc(key)}">Clear</button>`:''}
+      <span class="pill ${st.set?'set':'unset'}">${st.set?'set · '+esc(st.source||''):'unset'}</span>
+      <span class="msg" data-msg="${esc(key)}"></span>`;
+    box.appendChild(row);
+  }
+  box.querySelectorAll('[data-save]').forEach(b=>b.onclick=async()=>{
+    const key=b.dataset.save, inp=box.querySelector(`input[data-k="${key}"]`), msg=box.querySelector(`[data-msg="${key}"]`);
+    if(!inp.value){msg.textContent='enter a value';msg.className='msg err';return;}
+    let value=inp.value;
+    if(key==='ntfy_topic'){
+      const r=ntfyTopicFrom(value, NF.server);
+      if(r.err){msg.textContent=r.err;msg.className='msg err';return;}
+      value=r.topic;
+    }
+    try{
+      await api('/api/settings/secrets',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({name:key,value:value})});
+      inp.value=''; msg.textContent='saved · applied'; msg.className='msg ok'; setTimeout(load,700);
+    }catch(e){msg.textContent=e.message;msg.className='msg err';}
+  });
+  box.querySelectorAll('[data-clear]').forEach(b=>b.onclick=async()=>{
+    try{await api('/api/settings/secrets/'+encodeURIComponent(b.dataset.clear),{method:'DELETE'});load();}catch(e){}
+  });
+}
+
+// ── equipment specs + sequence of operations (fully editable per unit) ──────
+const EQ_FIELDS=[
+  ['unit_type','Unit type','text','AHU / RTU / heat pump …'],
+  ['manufacturer','Manufacturer','text','Trane, JCI, Symbio …'],
+  ['model','Model','text',''],
+  ['tons','Cooling capacity','num','tons'],
+  ['cooling_type','Cooling type','text','DX / chilled water / none'],
+  ['heating_type','Heating type','text','hot water / electric / gas / NONE'],
+  ['compressors','Compressors','num','count'],
+  ['cooling_stages','Cooling stages','num','count'],
+  ['supply_fans','Supply fans','num','count'],
+  ['design_cfm','Design airflow','num','cfm'],
+  ['floors_served','Floor(s) served','text','e.g. 8-9'],
+  ['area_served','Area served','text','e.g. Food Court'],
+];
+let EQ={equipment:{},systems:[]};
+async function loadEquipment(){
+  try{ EQ=await api('/api/systems/equipment'); }catch(e){ $('#eqForm').innerHTML='<div class="note">'+esc(e.message)+'</div>'; return; }
+  const sel=$('#eqUnit'), cur=sel.value;
+  sel.innerHTML=EQ.systems.map(s=>`<option value="${s.id}">${esc(s.code)}${s.name&&s.name!==s.code?' — '+esc(s.name):''}</option>`).join('');
+  if(cur) sel.value=cur;
+  renderEquipForm();
+}
+function renderEquipForm(){
+  const sid=$('#eqUnit').value; if(!sid) return;
+  const specs=EQ.equipment[String(sid)]||{};
+  const sys=EQ.systems.find(s=>String(s.id)===String(sid))||{};
+  const rows=EQ_FIELDS.map(([k,label,type,ph])=>{
+    const v=specs[k]?specs[k].value:'';
+    return `<div class="row"><label title="${esc(k)}">${esc(label)}</label>
+      <input type="${type==='num'?'number':'text'}" step="any" data-eq="${esc(k)}" value="${esc(v==null?'':v)}" placeholder="${esc(ph)}">
+      </div>`;}).join('');
+  $('#eqForm').innerHTML=rows+
+    `<div class="row" style="align-items:flex-start"><label title="sequence_of_operations">Sequence of operations</label>
+       <textarea id="eqSoo" rows="7" style="flex:1;min-width:320px;background:var(--bg);color:var(--fg);
+         border:1px solid var(--line);border-radius:4px;font:inherit;font-size:12px;padding:6px"
+         placeholder="e.g. Fan starts at occupancy. DAT reset 55-65F on OAT. Economizer enabled below the enthalpy changeover, min OA 20%. Stages lock out below 55F OAT…">${esc(sys.sequence_of_operations||'')}</textarea></div>
+     <div class="row"><button class="primary" id="eqSave">Save equipment</button>
+       <span class="note" style="padding:0">clear a field and Save to remove it</span></div>`;
+  $('#eqSave').onclick=saveEquipment;
+}
+async function saveEquipment(){
+  const sid=$('#eqUnit').value, msg=$('#eqMsg');
+  const specs={};
+  $('#eqForm').querySelectorAll('input[data-eq]').forEach(el=>{ specs[el.dataset.eq]=el.value.trim()===''?null:el.value.trim(); });
+  msg.textContent='saving…'; msg.className='msg';
+  try{
+    await api('/api/systems/'+sid+'/equipment',{method:'PUT',headers:{'content-type':'application/json'},
+      body:JSON.stringify({specs, sequence_of_operations: $('#eqSoo').value})});
+    msg.textContent='saved · applies to the next report'; msg.className='msg ok';
+    await loadEquipment();
+  }catch(e){ msg.textContent=e.message; msg.className='msg err'; }
+}
+$('#eqUnit').onchange=renderEquipForm;
+
+function inputFor(key,val){
+  if(typeof val==='boolean') return `<input type="checkbox" data-k="${esc(key)}" ${val?'checked':''}>`;
+  if(typeof val==='number') return `<input type="number" step="any" data-k="${esc(key)}" value="${esc(val)}">`;
+  const s=(val===null||typeof val==='object')?JSON.stringify(val):val;
+  return `<input type="text" data-k="${esc(key)}" value="${esc(s)}">`;
+}
+function renderSettings(eff,overrides){
+  effInit={...eff}; const ovr=new Set(overrides); const box=$('#settings'); box.innerHTML='';
+  const groups={};
+  for(const k of Object.keys(eff).sort()){const g=k.split('.')[0];(groups[g]=groups[g]||[]).push(k);}
+  for(const g of Object.keys(groups).sort()){
+    const div=document.createElement('div'); div.className='grp'; div.innerHTML=`<h3>${esc(g)}</h3>`;
+    for(const k of groups[g]){
+      const row=document.createElement('div'); row.className='row';
+      row.innerHTML=`<label title="${esc(k)}">${esc(k)}</label>${inputFor(k,eff[k])}${ovr.has(k)?'<span class="pill ovr">db override</span>':''}`;
+      div.appendChild(row);
+    }
+    box.appendChild(div);
+  }
+}
+function readInput(el){
+  if(el.type==='checkbox') return el.checked;
+  if(el.type==='number') return el.value===''?null:Number(el.value);
+  const orig=effInit[el.dataset.k];
+  if(typeof orig==='string') return el.value;          // keep strings as strings (no JSON coercion)
+  try{return JSON.parse(el.value);}catch(e){return el.value;}
+}
+$('#saveSettings').onclick=async()=>{
+  const changed={};
+  $('#settings').querySelectorAll('input[data-k]').forEach(el=>{
+    const k=el.dataset.k, v=readInput(el);
+    if(JSON.stringify(v)!==JSON.stringify(effInit[k])) changed[k]=v;
+  });
+  const msg=$('#settingsMsg');
+  if(!Object.keys(changed).length){msg.textContent='no changes';msg.className='msg';return;}
+  try{
+    const r=await api('/api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({settings:changed})});
+    const why=k=>k+(r.why&&r.why[k]?` (${r.why[k]})`:'');
+    msg.textContent=`saved ${r.applied.length}${r.rejected.length?' · REJECTED '+r.rejected.map(why).join(', '):''} — restart to apply`;
+    msg.className='msg '+(r.rejected.length?'err':'ok'); setTimeout(load,900);
+  }catch(e){msg.textContent=e.message;msg.className='msg err';}
+};
+
+$('#runBackup').onclick=async()=>{
+  const msg=$('#backupMsg'); msg.textContent='backing up…'; msg.className='msg';
+  try{const r=await api('/api/backup',{method:'POST'}); msg.textContent=`backed up ${r.file} (${fmtBytes(r.bytes)})`; msg.className='msg ok'; loadBackups();}
+  catch(e){msg.textContent=e.message;msg.className='msg err';}
+};
+async function downloadBackup(name){
+  const url='/api/backups/'+encodeURIComponent(name), msg=$('#backupMsg');
+  // Straight to the browser's own download, which streams to disk and shows progress. A
+  // backup is 2.6 GB: read into memory first, the page showed nothing for the whole
+  // transfer, a failure said nothing, and a second click held another copy (2026-10-27
+  // review). Only a UI token, which a plain link cannot carry, still goes through fetch.
+  if(!Object.keys(authHeaders()).length){
+    const a=document.createElement('a'); a.href=url; a.download=name;
+    document.body.appendChild(a); a.click(); a.remove();
+    msg.textContent='downloading '+name+' — see the browser\'s downloads'; msg.className='msg ok';
+    return;
+  }
+  msg.textContent='downloading '+name+'…'; msg.className='msg';
+  try{
+    const r=await fetch(url,{headers:authHeaders()});
+    if(!r.ok){showAuthWarn(r.status===401); msg.textContent='download failed: HTTP '+r.status;
+              msg.className='msg err'; return;}
+    const blob=await r.blob(); const u=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(u); msg.textContent='downloaded '+name; msg.className='msg ok';
+  }catch(e){ msg.textContent='download failed: '+e.message; msg.className='msg err'; }
+}
+async function loadBackups(){
+  const t=$('#backupList').querySelector('tbody'); t.innerHTML='';
+  try{
+    const r=await api('/api/backups');
+    if(!r.backups.length){t.innerHTML='<tr><td colspan="4" class="note">no backups yet</td></tr>';return;}
+    for(const b of r.backups){
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${esc(b.name)}</td><td>${fmtBytes(b.bytes)}</td><td>${fmtTime(b.mtime_utc)}</td><td><button class="link" data-dl="${esc(b.name)}">download</button></td>`;
+      t.appendChild(tr);
+    }
+    t.querySelectorAll('[data-dl]').forEach(x=>x.onclick=()=>downloadBackup(x.dataset.dl));
+  }catch(e){}
+}
+load().catch(e=>{$('#status').textContent='error: '+e.message;});
+</script>
+</body>
+</html>

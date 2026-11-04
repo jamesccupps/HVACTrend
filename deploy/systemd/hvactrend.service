@@ -1,0 +1,20 @@
+# HVACTrend web pages + collector. Edit User= and the two paths, then:
+#   sudo cp deploy/systemd/hvactrend*.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hvactrend.service hvactrend-watchdog.timer
+# BACnet/IP uses UDP 47808, which is not a privileged port: no root is needed.
+[Unit]
+Description=HVACTrend web pages and read-only BACnet collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hvactrend
+WorkingDirectory=/opt/hvactrend
+ExecStart=/opt/hvactrend/.venv/bin/python scripts/serve.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

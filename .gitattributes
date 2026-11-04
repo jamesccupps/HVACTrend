@@ -1,0 +1,6 @@
+# Store every file byte-for-byte: no line-ending conversion, in either direction.
+#
+# The tree mixes line endings (some files are CRLF, most are LF), and Git for Windows ships
+# with core.autocrlf=true, which would rewrite them on checkout and turn every diff into a
+# whole-file diff. See CONTRIBUTING.md, "Line endings are per file".
+* -text

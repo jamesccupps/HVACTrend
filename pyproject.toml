@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hvactrend"
+version = "0.1.0"
+description = "Read-only BACnet/IP trend logger, web viewer and rule-based alarms for building HVAC"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "James Cupps" }]
+keywords = ["bacnet", "hvac", "bms", "bas", "trend", "historian", "building-automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Manufacturing",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Home Automation",
+    "Topic :: System :: Monitoring",
+]
+
+# bacpypes3 is pinned exactly: the BACnet stack is the one dependency whose behaviour the
+# read-only guard is verified against. The rest are floors; requirements.txt holds the exact
+# versions the test suite last passed with.
+dependencies = [
+    "bacpypes3==0.0.106",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "PyYAML>=6.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+ai = ["anthropic>=0.117,<1"]   # the optional AI summary (Claude); imported only when used
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/jamesccupps/HVACTrend"
+Documentation = "https://github.com/jamesccupps/HVACTrend/tree/main/docs"
+Issues = "https://github.com/jamesccupps/HVACTrend/issues"
+
+[project.scripts]
+hvactrend-initdb = "hvactrend.storage.sqlite_dal:_cli_init_db"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hvactrend = ["api/static/*.html"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]

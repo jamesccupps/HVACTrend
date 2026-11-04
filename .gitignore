@@ -1,0 +1,39 @@
+# This building's own files: never in the repository
+config/config.yaml
+config/config.yaml.bak
+config/secrets.env
+config/secrets*
+config/*.local.yaml
+.env
+*.secret
+
+# Data, logs and archives (the database, backups, snapshots, the demo)
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

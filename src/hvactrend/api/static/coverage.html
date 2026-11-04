@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HVACTrend — Point Coverage</title>
+<style>
+  :root{--bg:#0b0e13;--panel:#131922;--panel2:#0f141c;--line:#243044;--fg:#c9d4e3;
+    --dim:#7c8aa0;--accent:#39d353;--accent2:#4aa8ff;--fault:#ff5f56;--amber:#f0b429;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.4 ui-monospace,"Cascadia Code",Consolas,monospace;}
+  header{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;gap:16px;background:var(--panel2);flex-wrap:wrap;}
+  header h1{font-size:15px;margin:0;letter-spacing:.5px;color:var(--accent);}
+  header a{color:var(--dim);text-decoration:none;font-size:12px;}
+  header a:hover{color:var(--accent2);} header a.active{color:var(--fg);}
+  header .status{color:var(--dim);font-size:12px;margin-left:auto;}
+  main{max-width:1040px;margin:0 auto;padding:20px 16px 60px;}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:6px;margin:0 0 18px;}
+  .card h2{font-size:13px;margin:0;padding:11px 16px;border-bottom:1px solid var(--line);
+    color:var(--accent2);letter-spacing:.5px;}
+  .card .body{padding:14px 16px;}
+  .note{color:var(--dim);font-size:12px;padding:4px 0;} .note b{color:var(--accent2);}
+  .warn{background:#2a1a12;border:1px solid #6b3f1f;color:var(--amber);padding:8px 12px;
+    border-radius:5px;font-size:12px;margin-bottom:14px;}
+  button{background:var(--panel);color:var(--fg);border:1px solid var(--line);
+    padding:6px 12px;border-radius:4px;cursor:pointer;font:inherit;}
+  button:hover{border-color:var(--accent2);color:#fff;}
+  button.primary{border-color:var(--accent2);color:var(--accent2);}
+  button.small{padding:2px 8px;font-size:12px;}
+  button:disabled{opacity:.6;cursor:default;}
+  .row{display:flex;gap:12px;align-items:center;padding:5px 0;flex-wrap:wrap;}
+  .msg{font-size:12px;} .msg.ok{color:var(--accent);} .msg.err{color:var(--fault);}
+  table{border-collapse:collapse;width:100%;}
+  td,th{text-align:left;padding:5px 8px;border-bottom:1px solid #1a212d;font-size:12px;vertical-align:top;}
+  th{color:var(--dim);font-weight:normal;}
+  .pill{font-size:11px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);
+    white-space:nowrap;}
+  .st-ready{color:var(--accent);border-color:var(--accent);}
+  .st-needs-logging{color:var(--amber);border-color:var(--amber);}
+  .st-missing{color:var(--fault);border-color:var(--fault);}
+  .st-not-possible{color:var(--accent2);border-color:var(--accent2);}
+  details.unit{border-bottom:1px solid #1a212d;}
+  details.unit>summary{cursor:pointer;padding:8px 4px;display:flex;gap:14px;align-items:center;
+    flex-wrap:wrap;list-style:none;}
+  details.unit>summary::-webkit-details-marker{display:none;}
+  details.unit>summary::before{content:"▸";color:var(--dim);}
+  details.unit[open]>summary::before{content:"▾";}
+  .code{color:var(--accent2);font-weight:bold;min-width:60px;}
+  .count{color:var(--dim);font-size:12px;}
+  .unitbody{padding:4px 4px 14px 22px;}
+  .unitbody h3{font-size:12px;color:var(--amber);margin:14px 0 4px;text-transform:uppercase;
+    letter-spacing:.5px;}
+  .why{color:var(--dim);font-size:12px;}
+  .flag{color:var(--fault);font-size:11px;}
+  .role{color:var(--dim);font-size:11px;}
+  .scroll{overflow-x:auto;}
+</style>
+</head>
+<body>
+<header>
+  <h1>HVACTrend</h1>
+  <a href="/">Point Selection</a>
+  <a href="/coverage" class="active">Point Coverage</a>
+  <a href="/dashboard">Unit Dashboard</a>
+  <a href="/trends">Trend Viewer</a>
+  <a href="/reports">AI Reports</a>
+  <a href="/settings">Settings</a>
+  <span class="status" id="status">loading…</span>
+</header>
+<main>
+  <div class="warn" id="warn" style="display:none"></div>
+
+  <div class="card">
+    <h2>POINT COVERAGE</h2>
+    <div class="body">
+      <div class="note">Every monitoring rule needs certain points: the discharge-air rule needs the
+        discharge temperature and its setpoint, the static rule the duct static and its setpoint, and so
+        on. For each unit, a rule is <span class="pill st-ready">ready</span> when everything it needs is
+        logged, <span class="pill st-needs-logging">needs logging</span> when the controller has the point
+        but it is not logged, <span class="pill st-missing">missing</span> when the unit has no such point,
+        and <span class="pill st-not-possible">not possible</span> when the site knowledge says it cannot
+        work on that unit.</div>
+      <div class="note">Points that are not what their name says are <b>set aside</b>, never offered, and
+        listed with the reason: the ones you ruled out (kept in <b>site_knowledge</b> in
+        config/config.yaml), and the ones whose own controller reports them unreliable (checked live
+        each time this page opens). <b>Start logging</b> is a change to this program only; nothing
+        is written to a controller.</div>
+      <div class="row">
+        <button class="primary" id="live">Check the offered points on the controllers again</button>
+        <button id="refresh">Refresh</button>
+        <span class="msg" id="msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>UNITS</h2>
+    <div class="body" id="units"><div class="note">loading…</div></div>
+  </div>
+
+  <div class="card" id="bldgCard" style="display:none">
+    <h2>BUILDING-WIDE (NOT ASSIGNED TO A UNIT)</h2>
+    <div class="body" id="bldg"></div>
+  </div>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTime=u=>u?new Date(u*1000).toLocaleString():'—';
+const TOKKEY='hvactrend_ui_token';
+function authHeaders(){const t=sessionStorage.getItem(TOKKEY)||'';return t?{'Authorization':'Bearer '+t}:{};}
+
+async function api(path,opts){
+  opts=opts||{};
+  const headers=Object.assign({},opts.headers||{},authHeaders());
+  const r=await fetch(path,Object.assign({},opts,{headers}));
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+  return j;
+}
+
+const LABEL={'ready':'ready','needs-logging':'needs logging','missing':'missing',
+             'not-possible':'not possible','n/a':'n/a'};
+let TITLES={};
+const OPEN=new Set();                   // units the user expanded, kept across refreshes
+
+function pill(status){return `<span class="pill st-${esc(status)}">${esc(LABEL[status]||status)}</span>`;}
+
+function gaps(rule){
+  // what stands between this rule and "ready": each need or gate not logged
+  return (rule.needs||[]).concat(rule.gate||[]).filter(n=>n.state!=='logged')
+    .map(n=>`${esc(n.req)} <span class="role">(${esc(n.state)})</span>`).join(', ');
+}
+
+function rulesTable(rules){
+  const rows=rules.map(r=>{
+    let detail='';
+    if(r.status==='not-possible') detail=`<span class="why">${esc(r.why)}</span>`;
+    else if(r.status==='needs-logging'||r.status==='missing') detail=gaps(r);
+    return `<tr><td>${pill(r.status)}</td><td>${esc(r.title)}</td><td>${detail}</td></tr>`;
+  });
+  return `<table><tr><th>status</th><th>rule</th><th>what it still needs</th></tr>${rows.join('')}</table>`;
+}
+
+function offerTable(list){
+  if(!list.length) return '<div class="note">Nothing to offer: every point the rules can use is logged.</div>';
+  const rows=list.map(p=>`<tr><td>${esc(p.name)}</td><td class="role">${esc(p.role)}</td>
+    <td class="role">${esc(p.object_type)}</td>
+    <td class="role">${(p.rules||[]).map(id=>esc(TITLES[id]||id)).join('<br>')}</td>
+    <td><button class="small" data-log="${esc(p.id)}">Start logging</button></td></tr>`);
+  return `<div class="scroll"><table><tr><th>point</th><th>role</th><th>type</th><th>used by</th><th></th></tr>${rows.join('')}</table></div>`;
+}
+
+function asideTable(list){
+  const rows=list.map(p=>`<tr><td>${esc(p.name)}${p.enabled?' <span class="flag">LOGGED</span>':''}</td>
+    <td class="role">${esc(p.role)}</td><td class="why">${esc(p.why)}</td></tr>`);
+  return `<div class="scroll"><table><tr><th>point</th><th>role</th><th>why it is set aside</th></tr>${rows.join('')}</table></div>`;
+}
+
+function unusedTable(list){
+  const rows=list.map(p=>`<tr><td>${esc(p.name)}</td><td class="role">${esc(p.role||'unclassified')}</td></tr>`);
+  return `<div class="scroll"><table><tr><th>point</th><th>role</th></tr>${rows.join('')}</table></div>`;
+}
+
+function unitHtml(s){
+  const suggest=s.suggest||[], ignored=s.ignored||[], unused=s.unused||[];
+  const loggedAside=ignored.filter(p=>p.enabled).length;
+  let body=`<h3>Rules</h3>${rulesTable(s.rules||[])}`;
+  body+=`<h3>Offered (${suggest.length})</h3>${offerTable(suggest)}`;
+  if(ignored.length) body+=`<h3>Set aside (${ignored.length})</h3>${asideTable(ignored)}`;
+  if(unused.length) body+=`<h3>Logged, but no rule reads it (${unused.length})</h3>
+    <div class="note">Not wrong to log: these are for people reading charts. A rule may use them later.</div>${unusedTable(unused)}`;
+  return `<details class="unit" data-code="${esc(s.code)}"${OPEN.has(s.code)?' open':''}>
+    <summary><span class="code">${esc(s.code)}</span>
+      <span>${s.applicable?`${s.ready} of ${s.applicable} rules ready`:'no rules apply'}</span>
+      <span class="count">${esc(s.logged)} of ${esc(s.points)} points logged</span>
+      <span class="count">${suggest.length} offered</span>
+      <span class="count">${ignored.length} set aside${loggedAside?` <span class="flag">(${loggedAside} logged)</span>`:''}</span>
+      ${unused.length?`<span class="count">${unused.length} logged, unused</span>`:''}
+    </summary><div class="unitbody">${body}</div></details>`;
+}
+
+function render(rep){
+  TITLES={}; (rep.rules||[]).forEach(r=>{TITLES[r.id]=r.title;});
+  const systems=rep.systems||[];
+  $('#units').innerHTML=systems.length?systems.map(unitHtml).join(''):'<div class="note">No units.</div>';
+  const bs=rep.unassigned_suggest||[], bi=rep.unassigned_ignored||[], bu=rep.unassigned_unused||[];
+  let b='';
+  if(bs.length) b+=`<h3 class="note">Offered</h3>${offerTable(bs)}`;
+  if(bi.length) b+=`<h3 class="note">Set aside</h3>${asideTable(bi)}`;
+  if(bu.length) b+=`<h3 class="note">Logged, but no rule reads it</h3>${unusedTable(bu)}`;
+  $('#bldg').innerHTML=b; $('#bldgCard').style.display=b?'':'none';
+  const ready=systems.reduce((a,s)=>a+s.ready,0), appl=systems.reduce((a,s)=>a+s.applicable,0);
+  let st=`${ready} of ${appl} rules ready across ${systems.length} units · built ${fmtTime(rep.built_utc)}`;
+  if(rep.live_checked!=null) st+=` · ${rep.live_checked} offered points checked live`;
+  if(rep.live_skipped) st+=` (${rep.live_skipped} more not checked: one check reads at most ${rep.live_checked})`;
+  $('#status').textContent=st;
+  if(rep.live_error){$('#msg').textContent='Not checked live: '+rep.live_error;$('#msg').className='msg err';}
+}
+
+async function load(live){
+  $('#msg').textContent=live?'reading the offered points from their controllers…':'';
+  $('#msg').className='msg';
+  $('#live').disabled=true; $('#refresh').disabled=true;
+  try{
+    const rep=await api('/api/coverage'+(live?'?live=true':''));
+    render(rep);
+    if(live&&!rep.live_error){
+      const aside=(rep.systems||[]).reduce((a,s)=>a+(s.ignored||[]).filter(p=>/read live/.test(p.why)).length,0);
+      $('#msg').textContent=`checked ${rep.live_checked} points: ${aside} set aside by their own controller`;
+      $('#msg').className='msg ok';
+    }
+    $('#warn').style.display='none';
+  }catch(e){
+    $('#warn').textContent='Could not load the coverage review: '+e.message; $('#warn').style.display='block';
+  }finally{$('#live').disabled=false; $('#refresh').disabled=false;}
+}
+
+document.addEventListener('toggle',e=>{
+  const d=e.target; if(!(d instanceof HTMLDetailsElement)||!d.dataset.code) return;
+  if(d.open) OPEN.add(d.dataset.code); else OPEN.delete(d.dataset.code);
+},true);
+
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-log]'); if(!b) return;
+  b.disabled=true; b.textContent='…';
+  try{
+    await api(`/api/points/${encodeURIComponent(b.dataset.log)}/enabled`,{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:true})});
+    b.textContent='logging ✓'; b.title='Logged from the next poll cycle. Refresh to update the rules.';
+  }catch(err){b.disabled=false; b.textContent='Start logging'; alert('Could not start logging: '+err.message);}
+});
+
+$('#live').onclick=()=>load(true);
+$('#refresh').onclick=()=>load(false);
+// Paint from the database at once, then check what is on offer against the controllers:
+// without it, profile points the unit programs do not drive (they read unreliable-other)
+// would be offered until someone thought to press the button. Bounded server-side.
+load(false).then(()=>load(true));
+</script>
+</body>
+</html>
