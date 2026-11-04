@@ -382,7 +382,7 @@ function newTopic(){
     const r=new Uint8Array(32); crypto.getRandomValues(r);
     for(const b of r){ if(b<248 && s.length<20) s+=A[b%31]; }
   }
-  return 'occ-'+s.match(/.{4}/g).join('-');
+  return 'hvac-'+s.match(/.{4}/g).join('-');
 }
 $('#nfGen').onclick=async()=>{
   const msg=$('#nfMsg');

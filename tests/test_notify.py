@@ -33,7 +33,7 @@ from hvactrend.models import Alert, Quality, Sample
 from hvactrend.storage.sqlite_dal import SQLiteDAL
 
 REPO = Path(__file__).resolve().parents[1]
-TOPIC = "occ-7kq2-m9xw-4tfh-p3vd-8ncr"
+TOPIC = "hvac-7kq2-m9xw-4tfh-p3vd-8ncr"
 TGT = {"server": "https://ntfy.sh", "topic": TOPIC}
 NO_CHECKIN = {"alerts": {"checkin": False}}
 

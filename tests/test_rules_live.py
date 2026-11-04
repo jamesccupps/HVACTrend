@@ -29,7 +29,7 @@ from hvactrend.storage.sqlite_dal import SQLiteDAL
 
 REPO = Path(__file__).resolve().parents[1]
 T0 = 1_700_000_000
-TGT = {"server": "https://ntfy.sh", "topic": "occ-7kq2-m9xw-4tfh-p3vd-8ncr"}
+TGT = {"server": "https://ntfy.sh", "topic": "hvac-7kq2-m9xw-4tfh-p3vd-8ncr"}
 
 
 class _Cfg(dict):

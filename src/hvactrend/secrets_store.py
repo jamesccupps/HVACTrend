@@ -74,10 +74,15 @@ def load_into_env(path: Optional[Path] = None) -> list[str]:
     allowed = set(SECRET_ENV.values())      # never inject arbitrary env vars from the file
     for env_name, value in _read_file(path).items():
         if env_name in allowed and value and not os.environ.get(env_name):
+            # An over-long value saved before set_secret checked: skip it, and never stop the
+            # watchdog that loads this file. Checked here, not left to os.environ: only
+            # Windows refuses a long variable (32,767); Linux took a 40,000-character one.
+            if len(value) > MAX_SECRET_LEN:
+                continue
             try:
                 os.environ[env_name] = value
-            except ValueError:      # an over-long value saved before the check: skip it,
-                continue            # never stop the watchdog that loads this file
+            except ValueError:
+                continue
             populated.append(env_name)
     return populated
 

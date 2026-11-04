@@ -5,6 +5,7 @@ viewer's in tests/js/viewer.test.mjs. Every test here was run against the origin
 and failed (scratchpad mutation runs) before the fix went in.
 """
 
+import os
 import time
 
 import pytest
@@ -322,7 +323,7 @@ def test_a_secret_is_one_short_printable_line(tmp_path, value):
     value past Windows' environment limit was saved and then broke every watchdog run."""
     from hvactrend import secrets_store
     f = tmp_path / "s.env"
-    secrets_store.set_secret("ntfy_topic", "occ-good-topic", path=f)
+    secrets_store.set_secret("ntfy_topic", "hvac-good-topic", path=f)
     before = f.read_bytes()
     with pytest.raises(ValueError):
         secrets_store.set_secret("ntfy_topic", value, path=f)
@@ -335,6 +336,18 @@ def test_an_over_long_secret_already_in_the_file_is_skipped_not_fatal(tmp_path, 
     f.write_text("HVACTREND_NTFY_TOPIC=" + "x" * 40000 + "\n", encoding="utf-8")
     monkeypatch.delenv("HVACTREND_NTFY_TOPIC", raising=False)
     assert secrets_store.load_into_env(f) == []
+
+
+def test_a_secret_over_the_limit_is_skipped_on_every_os(tmp_path, monkeypatch):
+    # Over MAX_SECRET_LEN but under Windows' 32,767: the test above passed on Windows only
+    # because the OS refused the variable; Linux CI loaded it.
+    from hvactrend import secrets_store
+    f = tmp_path / "s.env"
+    f.write_text("HVACTREND_NTFY_TOPIC=" + "x" * (secrets_store.MAX_SECRET_LEN + 1) + "\n",
+                 encoding="utf-8")
+    monkeypatch.delenv("HVACTREND_NTFY_TOPIC", raising=False)
+    assert secrets_store.load_into_env(f) == []
+    assert "HVACTREND_NTFY_TOPIC" not in os.environ
 
 # ── the collector (2026-10-27 review) ────────────────────────────────────────────────────
 class _App:
