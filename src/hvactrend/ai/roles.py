@@ -38,6 +38,7 @@ ANALYSIS_ROLES = frozenset({
     "CW_BYPASS_VALVE", "CW_BYPASS_FLOW",
     "CT_SUP_TEMP", "CT_FLOW", "CT_FAN_SPEED", "CT_BASIN_LEVEL", "CT_ISO_VALVE",
     "CW_PUMP_SPEED", "CW_PUMP_DP", "CW_PUMP_TEMP",
+    "CW_FILTER_DP",               # the side-stream separator's own DP, not the loop's
     # ── HOT-WATER SIDE (boilers, heating water, domestic hot water; 2026-09-29) ──
     "HW_SUP_TEMP", "HW_RET_TEMP", "BLR_SUP_TEMP", "BLR_RET_TEMP", "DHW_TEMP",
 })
@@ -51,6 +52,7 @@ STATUS_ROLES = frozenset({
     "CT_FAN_SPEED_CMD", "CW_PUMP_SPEED_CMD", "CT_ISO_VALVE_CMD", "CW_BYPASS_VALVE_CMD",
     "CT_FAN_ALARM", "CW_PUMP_ALARM", "CT_LEVEL_ALARM",
     "CT_ABORT",                   # a tower taken out of service (its riser valve closed)
+    "CW_FILTER_STATUS", "CW_FILTER_ALARM",   # the separator's own pump, not a CW pump
     # hot-water setpoints + discrete state. BLR_CMD is the enable the program SENDS a
     # boiler; BLR_CALL is a request that makes the program call one (a manual call, a
     # low-temperature enable, a DHW call) -- different questions, so different roles.
@@ -145,6 +147,19 @@ def _classify_water(n: str) -> Optional[str]:
     # silently discard one. Keeping them apart also makes command-vs-feedback
     # (64% asked, 62.8% delivered) a checkable relationship.
     cmd = is_sp or anyw("vso", "vlvo", "spdo", "output", " out")
+
+    # ── the side-stream separator / filter (a Lakos, say: SITE.CHW.LKS.FLT.*) FIRST. Its
+    # pump's run status and its DP are not the condenser pumps' or the loop's. Read as
+    # those, the filter pump -- which runs all the time -- answered "a condenser pump is
+    # proven on" for every check that asks the whole building, and its DP shared the loop
+    # DP's role (found when a rescan picked up a panel's rename of a binary input to
+    # SITE.CHW.LKS.FLT.STS, described "FLT PUMP STS").
+    if word("lks", "lakos") or anyw("separator", "side stream", "sidestream"):
+        if anyw("alarm", "alm", "fail"):
+            return "CW_FILTER_ALARM"
+        if anyw("diff press", "dpte", "press") or word("dp"):
+            return "CW_FILTER_DP"
+        return "CW_FILTER_STATUS"
 
     # ── makeup / fill valve BEFORE the basin-level test: the operator's label for it is
     # "Basin Fill Valve", which contains "basin" and would otherwise read as a level.

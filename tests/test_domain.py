@@ -1118,6 +1118,22 @@ def test_bypass_valve_command_and_feedback_survive_as_two_points():
     assert detect_command_vs_feedback_water(_DAL(), points, t0, t0 + n * 120) == []
 
 
+def test_the_separator_pump_is_not_a_condenser_pump():
+    """The Lakos separator's pump runs all the time. Classified CW_PUMP_STATUS (its tag
+    reads "FLT STS", its description "FLT PUMP STS"), it was proof that a condenser pump
+    was on for every building-wide check, whatever the real pumps did; its DP sat in the
+    loop DP's role beside the header DP."""
+    from hvactrend.ai.roles import classify, STATUS_ROLES, ANALYSIS_ROLES
+    assert classify("SITE.CHW.LKS.FLT.STS", None, "FLT  PUMP STS") == "CW_FILTER_STATUS"
+    assert classify("SITE.CHW.LKS.FLT.DPTE", None, "FILTER DP") == "CW_FILTER_DP"
+    assert classify("SITE.CHW.LKS.FLT.ALM", None, None) == "CW_FILTER_ALARM"
+    assert "CW_FILTER_STATUS" in STATUS_ROLES and "CW_FILTER_DP" in ANALYSIS_ROLES
+    # the real ones are untouched
+    assert classify("SITE.CHW.PMP1.STS", None, None) == "CW_PUMP_STATUS"
+    assert classify("SITE.CHW.HDR.DPTE", None, None) == "CW_DP"
+    assert classify("SITE.CHW.PMP2.ALM", None, None) == "CW_PUMP_ALARM"
+
+
 def test_a_standby_pump_at_rest_is_not_a_drive_fault():
     """CWP-2 sat at a 25% speed REFERENCE for 13 days with its status point reading 0 the
     whole time -- it is the standby pump and has never once run. The -4% feedback is the

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — rescan a controller
 
 - **Rescan a controller from Point Selection** (⟲ Rescan controller). Reads one controller's
   object list again on the server's own BACnet connection, so nothing is stopped.
@@ -12,7 +12,14 @@
   - [docs/commissioning.md](docs/commissioning.md#after-a-programming-change-rescan-a-controller).
 - **Fixed:** ⟳ Rebuild model said "Rebuild failed" after every successful rebuild while the
   statistical baselines are off (the default).
+- **Fixed:** a side-stream separator (a Lakos, say) is no longer taken for a condenser pump.
+  Its pump's run status had been classified as a condenser pump status, so a filter pump that
+  runs all the time counted as proof that the condenser pumps were on; its DP had shared the
+  loop DP's role. It gets roles of its own: `CW_FILTER_STATUS`, `CW_FILTER_DP`,
+  `CW_FILTER_ALARM`.
 - Every page's script is now checked to parse, in the test suite.
+
+## 0.1.0 — first public release
 
 HVACTrend has run in one building since July 2026; this is its first release for others.
 

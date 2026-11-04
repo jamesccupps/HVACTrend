@@ -134,8 +134,8 @@ The full walkthrough is [docs/getting-started.md](docs/getting-started.md).
 
 ## Status
 
-Version 0.1. HVACTrend has run in production in one building since July 2026. The core is
-covered by more than 440 automated tests, with no hardware needed:
+Version 0.2. HVACTrend has run in production in one building since July 2026. The core is
+covered by more than 450 automated tests, with no hardware needed:
 - logging, storage and backups;
 - the viewer;
 - the alarm rules and notifications.
