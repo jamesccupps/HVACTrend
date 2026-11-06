@@ -120,6 +120,7 @@
   <a href="/settings">Settings</a>
   <span class="status" id="status">loading…</span>
 </header>
+<div class="alertbar" id="alarmbar" style="display:none"></div>
 <div class="alertbar" id="alertbar" style="display:none"></div>
 <div class="wrap">
   <aside>
@@ -201,6 +202,22 @@ async function loadAlerts(){
      title="${esc(a.message)} · since ${ts(a.created_utc)}"><b>${esc(a.system_code||'')}</b> ${esc(a.message)}</span>`).join('');
   const more = open.length>8 ? `<span class="achip">+${open.length-8} more</span>` : '';
   bar.innerHTML = `<span class="albl">⚠ ${open.length} active alert${open.length!=1?'s':''}`
+    + `${nCrit?` · ${nCrit} critical`:''}:</span>${chips}${more}`;
+  bar.style.display='flex';
+}
+
+// the alarm rules' open incidents: listed here whatever the summary said about them, so one it
+// left out is still in front of the reader (2026-11-06 review, M2)
+async function loadAlarms(){
+  let d; try{ d = await j('/api/incidents'); }catch(e){ return; }
+  const open = d.open||[];
+  const bar = $('#alarmbar');
+  if(!open.length){ bar.style.display='none'; return; }
+  const nCrit = open.filter(i=>i.tier==='critical').length;
+  const chips = open.slice(0,8).map(i=>`<span class="achip ${i.tier==='critical'?'critical':''}"
+     title="${esc(i.tier)} · since ${ts(i.started_utc)}${i.detail?' · '+esc(i.detail):''}"><b>${esc(i.system_code||'')}</b> ${esc(i.name)}</span>`).join('');
+  const more = open.length>8 ? `<span class="achip">+${open.length-8} more</span>` : '';
+  bar.innerHTML = `<span class="albl">⚠ ${open.length} open alarm${open.length!=1?'s':''}`
     + `${nCrit?` · ${nCrit} critical`:''}:</span>${chips}${more}`;
   bar.style.display='flex';
 }
@@ -380,9 +397,9 @@ async function gen(kind, btn){
 $('#genDaily').onclick = e => gen('daily', e.target);
 $('#genWeekly').onclick = e => gen('weekly', e.target);
 
-loadAlerts();
+loadAlerts(); loadAlarms();
 initOpLog();
-setInterval(loadAlerts, 60000);   // refresh the alert banner every minute
+setInterval(()=>{ loadAlerts(); loadAlarms(); }, 60000);   // refresh both banners every minute
 loadReports().then(()=>{ if(!reports.length) showEmpty(); else openReport(reports[0].id); })
   .catch(e=> $('#status').textContent='error: '+e.message);
 </script>

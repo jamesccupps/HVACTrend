@@ -470,7 +470,8 @@ class SQLiteDAL(DAL):
         object id, grouped-friendly (ordered by device). BACnet objects only."""
         rows = self._conn.execute(
             "SELECT p.id AS point_id, p.object_type, p.object_instance, "
-            " p.poll_interval_s, p.units_text, d.id AS device_id, d.address "
+            " p.poll_interval_s, p.units_text, d.id AS device_id, d.address, "
+            " d.rpm_supported "
             "FROM points p JOIN devices d ON p.device_id = d.id "
             "WHERE p.enabled = 1 AND p.source = 'bacnet' "
             " AND p.object_type IS NOT NULL AND d.address IS NOT NULL "

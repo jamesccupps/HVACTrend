@@ -75,7 +75,7 @@ def main() -> int:
             return 0
         worst = "pass"
         for rid in ids:
-            v = _show(verify_report(dal, rid))
+            v = _show(verify_report(dal, rid, cfg))
             if v == "fail" or (v == "warn" and worst == "pass"):
                 worst = v
         return {"pass": 0, "warn": 1, "fail": 2}[worst]

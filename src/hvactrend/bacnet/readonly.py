@@ -41,14 +41,14 @@ class WriteBlockedError(RuntimeError):
     """Raised when a non-read BACnet service is attempted. Read-only means read-only."""
 
 
-# Reads + discovery — the ONLY services the application emits.
+# Reads + discovery — the ONLY services the application emits. The stack checks every APDU
+# it sends against this list, so it names what is sent and nothing more: AtomicReadFile and
+# Who-Has, never sent, came off it on 2026-11-06 (review M6).
 ALLOWED_SERVICES: frozenset[str] = frozenset({
     "ReadPropertyRequest",
     "ReadPropertyMultipleRequest",
     "ReadRangeRequest",          # Trend Log buffer harvest
-    "AtomicReadFileRequest",     # read-only file read (e.g. some trend-log files)
     "WhoIsRequest",
-    "WhoHasRequest",
     # Responses this app emits as its own device identity (harmless, expected):
     "IAmRequest",
     "IHaveRequest",

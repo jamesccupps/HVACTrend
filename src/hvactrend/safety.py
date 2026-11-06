@@ -47,10 +47,15 @@ def assert_read_only_default(config: Any) -> None:
     safety = _get(config, "bacnet", "safety", default={}) or {}
     allow_writes = bool(_get(safety, "allow_writes", default=False))
 
-    # The unconditional block must hold regardless of any flag.
+    # The unconditional block must hold regardless of any flag: all seven, spelled out here
+    # so that taking one off readonly's list is caught too (2026-11-06 review).
     for destructive in ("ReinitializeDeviceRequest",
                         "DeviceCommunicationControlRequest",
-                        "AtomicWriteFileRequest"):
+                        "AtomicWriteFileRequest",
+                        "CreateObjectRequest",
+                        "DeleteObjectRequest",
+                        "ConfirmedPrivateTransferRequest",
+                        "UnconfirmedPrivateTransferRequest"):
         try:
             guard_service(destructive, allow_writes=True, allow_cov=True)
         except WriteBlockedError:

@@ -15,8 +15,22 @@
 - The Tempest token no longer appears in a weather error, which went to the log.
 - A point name that starts with `=`, `+`, `-` or `@` is kept as text in CSV exports, not run
   as a spreadsheet formula.
+- Nothing on the network can write to HVACTrend's own BACnet device object any more. A
+  WriteProperty to it is refused, and WritePropertyMultiple and SubscribeCOV are rejected.
+  Its APDU timeout lives there, so one write could have made every read fail.
+- The read-only guard now checks every request the BACnet stack actually sends, not a name
+  passed to it. Its list holds only what is sent, and the startup check covers all seven
+  services that are never allowed.
+- Names and text from controllers and operators go into the AI summary's prompt on one line,
+  in quotes, under a rule that quoted text is data. The previous summary is marked line by
+  line. A renamed point could otherwise add its own lines to the prompt.
 
 **Alarms**
+- The dashboard and the Reports page list the alarm rules' open alarms, and each unit shows
+  how many it has. "Active alerts" counts only the watchdog's own, so an open alarm was on
+  no page. `GET /api/incidents` returns the same list.
+- Under each AI summary, the program lists every open critical or action alarm, and every
+  open watchdog alert, that no action in the summary cites.
 - The watchdog sends a last-resort push when it can't run: an unreadable `config.yaml`
   (including a YAML syntax error), a database that won't open, or checks that crash. It
   needs only the topic, sends at most once an hour, and says when it's running again.
@@ -41,6 +55,15 @@
 - Rediscovering a controller no longer blanks its name, model or router flags.
 - The "auth token" bar appears only when a token is actually wrong, not for "BACnet offline".
 - `__version__` comes from the package metadata.
+- A controller that gives no answer at all costs one request a cycle, not the whole 45 s
+  budget: the rest of its points are recorded as no-answer at once. It is then asked every
+  1, 2, 4… cycles, at most about 15 minutes apart, and the priority read leaves it alone
+  meanwhile. Every cycle still records it as failed, so its watchdog alert works as before.
+  A controller that discovery found refuses grouped reads is no longer sent one.
+- `verify_report.py` reads `°F` and `in. w.c.` figures as the summary writes them, knows the
+  plant's own unit names (not only AC-n and HVn), and can pass: it no longer warns about
+  baselines while `ai.baselines` is off, nor fails for missing weather when there is no
+  weather source.
 
 ## 0.2.0 — rescan a controller
 

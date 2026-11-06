@@ -75,11 +75,16 @@ async def generate_report(dal: Any, config: Any, kind: str, *,
                 "call": call}
 
     kept, dropped = summary.accept(result.data, items)
-    text = summary.prose(result.data, kept, dropped)
-    call = {**result.call, "kept_actions": len(kept), "dropped_actions": len(dropped)}
+    missed = summary.unaddressed(items, kept)
+    text = summary.prose(result.data, kept, dropped, missed)
+    call = {**result.call, "kept_actions": len(kept), "dropped_actions": len(dropped),
+            "unaddressed": len(missed)}
     if dropped:
         log.warning("%s report: %d action(s) cited no detected item and were dropped",
                     kind, len(dropped))
+    if missed:
+        log.warning("%s report: %d open alarm(s) had no action; listed under the summary",
+                    kind, len(missed))
     report = Report(kind=kind, period_start_utc=win_start, period_end_utc=win_end,
                     created_utc=now, provider=result.provider or getattr(prov, "name", None),
                     model=result.model or getattr(prov, "model", None),

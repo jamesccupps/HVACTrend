@@ -22,18 +22,9 @@ from typing import Any, Optional
 # to look like instructions). _safe() strips control chars / newlines so a value can't
 # inject its own lines or headings into the compact prompt block, defangs code fences,
 # and caps length. Combined with the untrusted-data fence in render_context() and the
-# system-prompt reminder, this contains prompt-injection to inert data.
-_CTRL = re.compile(r"[\x00-\x1f\x7f]")
-
-
-def _safe(text: Any, cap: int = 160) -> Any:
-    """Neutralize device/operator free-text before embedding it in the LLM prompt.
-    Non-str values (numbers) pass through unchanged."""
-    if not isinstance(text, str):
-        return text
-    s = _CTRL.sub(" ", text).replace("`", "'")
-    s = re.sub(r"\s+", " ", s).strip()
-    return (s[:cap] + "…") if len(s) > cap else s
+# system-prompt reminder, this contains prompt-injection to inert data. Shared with the
+# live summary since 2026-11-06 (ai/sanitize.py).
+from .sanitize import safe as _safe  # noqa: E402
 
 from . import health
 from .baseline import _preds_by_system, is_occupied, occ_schedule

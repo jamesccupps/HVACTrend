@@ -10,8 +10,9 @@ Ownership: the FastAPI lifespan (api/app.py) owns the loop, calls
 collector receives the same object — it never creates its own.
 
 Read-only: this wrapper exposes ONLY read/discovery methods. There is no
-`write_property` here, by design. Every outbound request is additionally routed
-through `readonly.guard_request` (defense-in-depth, plan §5).
+`write_property` here, by design. Underneath, the stack itself (`_stack_class()`) puts
+every APDU it sends through `readonly.guard_request` (defense-in-depth, plan §5) and
+refuses the writes and subscriptions other devices send to OUR device object.
 
 The bacpypes3 API used here is empirically verified against bacpypes3 0.0.106
 (live loopback round-trip). bacpypes3 is imported lazily so the rest of the
@@ -88,8 +89,8 @@ class ReadOnlyBACnetApplication:
             address=str(local_address),
             foreign=None, network=None, bbmd=None, ttl=None,
         )
-        from bacpypes3.app import Application  # lazy import
-        app = Application.from_args(args)
+        app = _stack_class().from_args(args)
+        app._allow_writes, app._allow_cov = allow_writes, allow_cov
         logger.info("ReadOnlyBACnetApplication bound: instance=%s addr=%s",
                     device_instance, local_address)
         return cls(app, allow_writes=allow_writes, allow_cov=allow_cov)
@@ -117,8 +118,6 @@ class ReadOnlyBACnetApplication:
 
         Returns a list of bacpypes3 IAmRequest objects.
         """
-        guard_request("WhoIsRequest",
-                      allow_writes=self._allow_writes, allow_cov=self._allow_cov)
         return await self._app.who_is(low_limit, high_limit, _addr(address), timeout)
 
     async def read_property(self, address: Any, object_identifier: Any,
@@ -129,8 +128,6 @@ class ReadOnlyBACnetApplication:
         A device error/reject/abort is RETURNED (not raised) for a uniform caller
         contract — see _normalize_errors.
         """
-        guard_request("ReadPropertyRequest",
-                      allow_writes=self._allow_writes, allow_cov=self._allow_cov)
         err = _bacnet_error_base()
         try:
             return await self._app.read_property(
@@ -146,8 +143,6 @@ class ReadOnlyBACnetApplication:
         Returns a list of (ObjectIdentifier, PropertyIdentifier, index|None, value),
         or a returned error object if the whole request was rejected/aborted.
         """
-        guard_request("ReadPropertyMultipleRequest",
-                      allow_writes=self._allow_writes, allow_cov=self._allow_cov)
         err = _bacnet_error_base()
         try:
             return await self._app.read_property_multiple(_addr(address), parameter_list)
@@ -159,8 +154,6 @@ class ReadOnlyBACnetApplication:
                          array_index: Optional[int] = None,
                          range_params: Any = None) -> Any:
         """ReadRange over a Trend Log buffer for harvest/backfill. (Phase 7.)"""
-        guard_request("ReadRangeRequest",
-                      allow_writes=self._allow_writes, allow_cov=self._allow_cov)
         err = _bacnet_error_base()
         try:
             return await self._app.read_range(
@@ -172,12 +165,56 @@ class ReadOnlyBACnetApplication:
     # NB: there is deliberately NO write_property / write_property_multiple method.
     # Adding one is a guardrail violation. Reads only.
     #
-    # There is also deliberately NO `raw`/underlying-Application accessor. The bare
-    # bacpypes3 Application supports write_property / write_property_multiple / COV
-    # subscribe and is NOT routed through guard_request, so exposing it would punch a
-    # hole straight through the read-only guardrail. Everything the program needs is a
+    # There is also deliberately NO `raw`/underlying-Application accessor. The bacpypes3
+    # Application has write_property / COV subscribe methods; its guard_request would
+    # refuse them, but that guard is the tripwire, not the plan, and exposing the stack
+    # would leave only the tripwire. Everything the program needs is a
     # read/discovery method above; if a new read is required, add a guarded method here
     # — never hand out self._app.
+
+
+_STACK_CLASS: Any = None
+
+
+def _stack_class() -> Any:
+    """bacpypes3's Application, made read-only in both directions (lazy-built, cached).
+
+    Outbound: every APDU the stack sends goes through guard_request. The façade's methods
+    used to pass the guard a constant name ("ReadPropertyRequest"), so it could never block
+    anything; here it sees the real request.
+
+    Inbound: the stock Application answers WriteProperty, WritePropertyMultiple and
+    SubscribeCOV to its own objects, with a plain setattr. Its client state machine reads
+    apduTimeout and numberOfApduRetries from that same device object, so any host on the
+    network could set our timeout to 1 ms and every read would fail (2026-11-06 review, M6).
+    Reads of our device object are still answered, as a BACnet device should.
+    """
+    global _STACK_CLASS
+    if _STACK_CLASS is None:
+        from bacpypes3.app import Application
+        from bacpypes3.errors import ExecutionError, UnrecognizedService
+
+        class _ReadOnlyStack(Application):
+            _allow_writes = False
+            _allow_cov = False
+
+            def request(self, apdu):  # type: ignore[override]
+                guard_request(apdu, allow_writes=self._allow_writes, allow_cov=self._allow_cov)
+                return super().request(apdu)
+
+            async def do_WritePropertyRequest(self, apdu) -> None:
+                raise ExecutionError(errorClass="property", errorCode="writeAccessDenied")
+
+            # These two answer with a reject: WritePropertyMultiple's error reply has its own
+            # shape, and neither is a service this device offers.
+            async def do_WritePropertyMultipleRequest(self, apdu) -> None:
+                raise UnrecognizedService("this device takes no writes")
+
+            async def do_SubscribeCOVRequest(self, apdu) -> None:
+                raise UnrecognizedService("this device takes no subscriptions")
+
+        _STACK_CLASS = _ReadOnlyStack
+    return _STACK_CLASS
 
 
 _BACNET_ERROR_BASE: Any = None

@@ -45,6 +45,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     from ..collector.service import Collector
     from ..config import load_config
     from ..discovery_service import run_discovery
+    from ..rules import catalog as _catalog
     from ..safety import assert_read_only_default
     from ..storage.sqlite_dal import SQLiteDAL
 
@@ -900,6 +901,23 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             return rows
         return [a for a in rows if a.get("source") == "watchdog"]
 
+    _TIER_RANK = {"critical": 0, "action": 1, "watch": 2}
+
+    def _open_incidents(code: Optional[str] = None) -> list[dict]:
+        """The alarm rules' open incidents (rules/, run by the watchdog), worst first, each
+        with the name the phone uses. "Active alerts" counts the watchdog's own alerts, so
+        no page listed these, and an alarm the summary left out showed nowhere (2026-11-06
+        review, M2)."""
+        dal = app.state.dal
+        if not dal.has_table("incidents"):
+            return []
+        rows = [dict(r, name=_catalog.name(r)) for r in dal.open_incidents()
+                if code is None or r.get("system_code") == code]
+        rows.sort(key=lambda r: (_TIER_RANK.get(r.get("tier"), 3), r.get("started_utc") or 0))
+        return [{k: r.get(k) for k in ("id", "rule", "system_code", "name", "tier", "detail",
+                                       "started_utc", "occurrences", "feedback")}
+                for r in rows]
+
     def _after_hours(days: float, system_id: Optional[int] = None) -> list[dict]:
         dal = app.state.dal
         if not dal.has_table("point_command"):
@@ -957,6 +975,10 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         for o in _overrides():
             if not o["expected"]:          # held on purpose is not something to look at
                 over_n[o.get("system_id")] = over_n.get(o.get("system_id"), 0) + 1
+        incidents = _open_incidents()
+        inc_n: dict[str, int] = {}
+        for i in incidents:
+            inc_n[i["system_code"]] = inc_n.get(i["system_code"], 0) + 1
 
         units = []
         for s in dal.list_systems():
@@ -964,6 +986,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
                 "id": s["id"], "code": s["code"], "name": s.get("name"),
                 "occupancy_mode": s.get("occupancy_mode"),
                 "alerts": alert_n.get(s["code"], 0),
+                "incidents": inc_n.get(s["code"], 0),
                 "findings": find_n.get(s["id"], 0),
                 "overrides": over_n.get(s["id"], 0),
                 "cells": cells_by_sys.get(s["id"], {}),
@@ -973,6 +996,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
                 "columns": [{"role": r, "label": labels.get(r, r)} for r in role_list],
                 "available_roles": avail,      # [{role, units}] — the column-picker menu
                 "default_roles": default_roles,
+                "incidents": incidents,        # the alarm rules' open alarms, worst first
                 "units": units}
 
     @app.get("/api/systems/{system_id}/overview")
@@ -1010,7 +1034,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
                        "occ_schedule": sysrow.get("occ_schedule"),
                        "notes": sysrow.get("notes"),
                        "sequence_of_operations": sysrow.get("sequence_of_operations")},
-            "alerts": alerts, "findings": findings,
+            "alerts": alerts, "incidents": _open_incidents(code), "findings": findings,
             "operator_notes": notes, "equipment": equip, "overrides": over,
             "after_hours": _after_hours(7, system_id),
             "points": ov["points"], "now_utc": now,
@@ -1414,6 +1438,12 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     # /api/health (the old health grades) were removed 2026-10-20. The summary is handed
     # the alarm rules' findings instead (ai/summary.py), and both ran the old detectors on
     # the loop the collector polls from: a week's context took 60 s.
+    @app.get("/api/incidents")
+    async def incidents() -> dict[str, Any]:
+        """The alarm rules' open incidents, worst first. Read-only, from the database; not
+        on the remote viewer's list."""
+        return {"open": _open_incidents()}
+
     @app.get("/api/alerts")
     async def alerts(status: str | None = None, limit: int = 100) -> dict[str, Any]:
         """Between-report alerts: currently-active high/critical conditions raised by the
@@ -1483,7 +1513,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         deliberately unauthenticated like the rest of the read surface — a report that
         says something untrue should be catchable by anyone looking at it."""
         from ..ai.verify import verify_report
-        out = verify_report(app.state.dal, report_id)
+        out = verify_report(app.state.dal, report_id, getattr(app.state, "config", None))
         if out.get("error"):
             raise HTTPException(status_code=404, detail=out["error"])
         return out

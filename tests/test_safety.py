@@ -14,8 +14,12 @@ from hvactrend.bacnet.readonly import WriteBlockedError, classify_service, guard
 
 def test_reads_and_discovery_allowed():
     for svc in ("ReadPropertyRequest", "ReadPropertyMultipleRequest",
-                "ReadRangeRequest", "WhoIsRequest", "WhoHasRequest"):
+                "ReadRangeRequest", "WhoIsRequest", "IAmRequest"):
         guard_service(svc)  # must not raise
+    # never sent, so not on the list: the stack checks every APDU against it (review M6)
+    for svc in ("AtomicReadFileRequest", "WhoHasRequest"):
+        with pytest.raises(WriteBlockedError):
+            guard_service(svc)
 
 
 def test_property_writes_blocked_by_default():

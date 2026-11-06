@@ -491,7 +491,7 @@ def test_report_verifier_catches_the_errors_the_operator_had_to_catch(tmp_path):
 
     kinds = {k["check"]: k for k in out["checks"] if k["status"] in ("fail", "warn")}
     # the compact list form must be parsed, or the count check reports "lists 1"
-    assert units_in("AC-3,4,5,6,8,9,10,12") == [
+    assert units_in("AC-3,4,5,6,8,9,10,12", ["AC-1"]) == [
         "AC-3", "AC-4", "AC-5", "AC-6", "AC-8", "AC-9", "AC-10", "AC-12"]
     assert "count_vs_list" in kinds
     assert "says 5 but lists 8" in kinds["count_vs_list"]["detail"]

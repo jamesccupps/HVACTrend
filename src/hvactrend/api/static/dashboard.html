@@ -282,12 +282,14 @@ function renderFleet(d){
   }
   let html = `<div class="hint">Click a unit to drill in · a column header to chart that reading across all units · a cell to open that point. Amber = statistical outlier vs the fleet. <button class="link" id="cfgCols">⚙ Columns</button></div>
     ${pickerOpen ? colPickerHtml(cols) : ''}
+    ${alarmBanner(d.incidents, true)}
     <table class="fleet"><thead><tr>
       <th class="ul">Unit</th>
       ${cols.map(c=>`<th data-role="${esc(c.role)}" title="Chart ${esc(colLabel(c.role,c.label))} across all units">${esc(colLabel(c.role,c.label))}</th>`).join('')}
     </tr></thead><tbody>`;
   for(const u of units){
-    const badges = (u.alerts?`<span class="badge al" title="active alerts">${u.alerts}</span>`:'')
+    const badges = (u.incidents?`<span class="badge al" title="open alarms (the alarm rules)">ALM ${u.incidents}</span>`:'')
+                 + (u.alerts?`<span class="badge al" title="active alerts">${u.alerts}</span>`:'')
                  + (u.findings?`<span class="badge fn" title="open findings">${u.findings}</span>`:'')
                  + (u.overrides?`<span class="badge ov" title="points under an override (an operator, or life safety)">OVR ${u.overrides}</span>`:'');
     html += `<tr>
@@ -364,12 +366,14 @@ function render(d){
     <div class="hcards">
       <div class="hc"><div class="k">Unit</div><div class="v">${esc(s.code)}${s.name&&s.name!==s.code?' — '+esc(s.name):''}</div></div>
       <div class="hc"><div class="k">Occupancy</div><div class="v">${esc(s.occupancy_mode||'scheduled')}</div></div>
+      <div class="hc ${(d.incidents||[]).length?'bad':''}"><div class="k">Open alarms</div><div class="v">${(d.incidents||[]).length}</div></div>
       <div class="hc ${d.alerts.length?'bad':''}"><div class="k">Active alerts</div><div class="v">${d.alerts.length}</div></div>
       <div class="hc ${d.findings.length?'warn':''}"><div class="k">Open findings</div><div class="v">${d.findings.length}</div></div>
       <div class="hc ${(d.overrides||[]).some(o=>!o.expected)?'ovr':''}"><div class="k">Overrides</div><div class="v">${(d.overrides||[]).filter(o=>!o.expected).length}</div></div>
       ${equipSummary(d.equipment)}
     </div></div>`;
 
+  html += alarmBanner(d.incidents, false);
   if(d.alerts.length) html += `<div class="banner alert">${d.alerts.map(a=>
     `<div class="row"><span class="sev ${esc((a.severity||'').toLowerCase())}">${esc(a.severity)}</span>${esc(a.message)}</div>`).join('')}</div>`;
   // after-hours use (DAL.after_hours_sessions): the unit run outside its schedule by an
@@ -438,6 +442,14 @@ function equipSummary(eq){
   const bits=[]; for(const k of ['unit_type','tons','cooling_type','heating_type']){
     if(eq[k]) bits.push(esc(eq[k].value)+(eq[k].unit?(' '+esc(eq[k].unit)):'')); }
   return bits.length? `<div class="hc"><div class="k">Equipment</div><div class="v">${bits.join(' · ')}</div></div>`:'';
+}
+// the alarm rules' open incidents (GET /api/incidents has the same list): "Active alerts" is
+// the watchdog's own, so before 2026-11-06 an open alarm was on no page (review M2)
+const TIER_SEV = {critical:'critical', action:'high', watch:'medium'};
+function alarmBanner(list, withUnit){
+  if(!(list||[]).length) return '';
+  return `<div class="banner alert"><b>Open alarms:</b>${list.map(i=>
+    `<div class="row"><span class="sev ${TIER_SEV[i.tier]||'medium'}">${esc(i.tier)}</span>${withUnit?'<b>'+esc(i.system_code)+'</b> ':''}${esc(i.name)} · since ${when(i.started_utc)}${i.detail?' · '+esc(i.detail):''}</div>`).join('')}</div>`;
 }
 function when(a,b){ const f=t=>new Date(t*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
   return b? f(a)+'→'+new Date(b*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : f(a); }

@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from ..bacnet import priority
 from ..bacnet.application import ReadOnlyBACnetApplication
-from ..bacnet.discovery import _is_error, _present_value
+from ..bacnet.discovery import _is_error, _no_response, _present_value
 from ..models import PollHealth, Quality, Sample
 # The one definition of "newest archive", shared with the watchdog's daily check-in (which
 # must not import this module). newest_archive_mtime is re-exported here for old callers.
@@ -64,6 +64,14 @@ class Collector:
         # meanwhile. So each device gets this long per cycle; points not reached in time are
         # recorded as comm-loss and the cycle moves on.
         self._device_budget_s = float(_get(poll, "device_budget_s", default=45) or 45)
+        # A controller that gives no answer at all is given up on at its first silent request
+        # and then asked only every 1, 2, 4... cycles, at most about 15 min apart; the cycles
+        # in between record its points as comm-loss without a request. It used to cost the
+        # whole 45 s budget every cycle, and two dark controllers pushed the cycle past its
+        # interval (2026-11-06 review, M7). address -> [silent cycles, cycles still to skip]
+        self._dark: dict[str, list[int]] = {}
+        self._dark_cap = max(1, int(900 // max(self._interval_s, 1)))
+        self._rpm_ok: set[str] = set()      # devices that answered a grouped read this run
         # Who is in control of each commandable point (bacnet/priority.py): its priority
         # array, READ every priority_interval_s (2026-10-06: would it know if they had
         # something overridden?). 0 switches it off. Small batches: sixteen slots a point
@@ -266,13 +274,31 @@ class Collector:
                 time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(self._last_tick_ts))))
         self._last_tick_ts = max(ts, int(self._last_tick_ts or ts))
         total = 0
-        for i, ((device_id, address), pts) in enumerate(by_device.items()):
+        asked = 0
+        for (device_id, address), pts in by_device.items():
             if self._stop.is_set():
                 break
-            if i and self._stagger_s:
+            dark = self._dark.get(address)
+            if dark and dark[1] > 0:                 # not answering: not asked this cycle
+                dark[1] -= 1
+                try:
+                    total += self._store([_sample_from(p, {}, ts) for p in pts], device_id)
+                    # still a row every cycle: the watchdog's controller alerts read these
+                    self._dal.record_poll_health(PollHealth(
+                        device_id=device_id, ts_utc=ts, ok=False, latency_ms=0,
+                        reads_attempted=len(pts), reads_ok=0, method="skipped",
+                        error=f"not answering, so not asked this cycle; asked again in about "
+                              f"{max(1, round((dark[1] + 1) * self._interval_s / 60))} min"))
+                except Exception:  # noqa: BLE001 -- as a polled device's failure below
+                    logger.exception("could not record skipped device %s (%s)", device_id,
+                                     address)
+                continue
+            if asked and self._stagger_s:
                 await self._sleep(self._stagger_s)   # don't fire all SC trunks at t=0
+            asked += 1
             try:
                 samples, health = await self._poll_device(address, device_id, pts, ts)
+                self._note_answer(address, device_id, health)
                 if samples:
                     total += self._store(samples, device_id)
                 self._dal.record_poll_health(health)
@@ -306,49 +332,75 @@ class Collector:
 
     async def _poll_device(self, address: str, device_id: int, pts: list[dict],
                            ts: int) -> tuple[list[Sample], PollHealth]:
-        """Read one device's enabled points (batched RPM, per-object fallback)."""
+        """Read one device's enabled points (batched RPM, per-object fallback).
+
+        A request that gets no reply at all ends the device's cycle: the rest of its points
+        are recorded as comm-loss at once, and with nothing read the health row's method is
+        "no-answer" (review M7). An RPM's silence counts only from a device known to answer
+        RPM (discovery found so, or it has this run); otherwise one single read decides,
+        since a device may drop the grouped request and still answer the plain one."""
         t0 = time.monotonic()
         samples: list[Sample] = []
         reads_ok = 0
         method = "rpm"
 
         skipped = 0
+        silent = 0                       # points not asked because a request got no reply
+        rpm_flag = pts[0].get("rpm_supported") if pts else None
+        use_rpm = rpm_flag is None or bool(rpm_flag)     # discovery found it refuses RPM
+        rpm_known = bool(rpm_flag) or address in self._rpm_ok
 
         def over_budget() -> bool:
             return time.monotonic() - t0 > self._device_budget_s
 
         for start in range(0, len(pts), self._batch):
             chunk = pts[start:start + self._batch]
-            if over_budget():                         # out of time: unread this cycle
+            if silent or over_budget():               # out of time: unread this cycle
                 samples += [_sample_from(p, {}, ts) for p in chunk]
-                skipped += len(chunk)
+                if silent:
+                    silent += len(chunk)
+                else:
+                    skipped += len(chunk)
                 continue
-            params: list[Any] = []
-            oid_pt: dict[str, dict] = {}
-            for p in chunk:
-                oid = f"{p['object_type']},{p['object_instance']}"
-                oid_pt[oid] = p
-                params.append(oid)
-                params.append(list(_SAMPLE_PROPS))
+            rows = None
+            if use_rpm:
+                params: list[Any] = []
+                oid_pt: dict[str, dict] = {}
+                for p in chunk:
+                    oid = f"{p['object_type']},{p['object_instance']}"
+                    oid_pt[oid] = p
+                    params.append(oid)
+                    params.append(list(_SAMPLE_PROPS))
 
-            try:
-                rows = await self._app.read_property_multiple(address, params)
-            except Exception:  # noqa: BLE001 -- a reply that would not decode, raised
-                rows = None
+                try:
+                    rows = await self._app.read_property_multiple(address, params)
+                except Exception:  # noqa: BLE001 -- a reply that would not decode, raised
+                    rows = None
+                if rpm_known and _no_response(rows):
+                    samples += [_sample_from(p, {}, ts) for p in chunk]
+                    silent += len(chunk)
+                    continue
             # None is what bacpypes3 returns for a reply that is not an RPM-ACK. It used to
             # reach the loop below as a TypeError, and the whole device's cycle went, the
             # chunks already read included (2026-10-27 review). The other readers guard it.
             if rows is None or _is_error(rows):
                 method = "single"
                 for p in chunk:
-                    if over_budget():
+                    if silent or over_budget():
                         samples.append(_sample_from(p, {}, ts))
-                        skipped += 1
+                        if silent:
+                            silent += 1
+                        else:
+                            skipped += 1
                         continue
-                    s = await self._read_single(address, p, ts)
+                    s, heard = await self._read_single(address, p, ts)
                     samples.append(s)
                     reads_ok += s.quality != Quality.COMM_LOSS
+                    if not heard:
+                        silent += 1
             else:
+                self._rpm_ok.add(address)
+                rpm_known = True
                 grouped: dict[str, dict[str, Any]] = {}
                 for objid, propid, _idx, value in rows:
                     grouped.setdefault(str(objid), {})[str(propid)] = value
@@ -360,20 +412,40 @@ class Collector:
         if skipped:
             logger.warning("device %s (%s): %d point(s) not read, the %.0f s budget ran out",
                            device_id, address, skipped, self._device_budget_s)
+        if silent and not reads_ok:
+            method = "no-answer"
+        if silent:
+            error = (f"no answer: {silent} point(s) not read after a request timed out"
+                     + (f"; {skipped} more not read, the budget ran out" if skipped else ""))
+        elif skipped:
+            error = f"{skipped} not read: the {self._device_budget_s:.0f} s budget ran out"
+        else:
+            error = None if reads_ok else "no successful reads"
         health = PollHealth(
             device_id=device_id, ts_utc=ts, ok=reads_ok > 0,
             latency_ms=int((time.monotonic() - t0) * 1000),
-            reads_attempted=len(pts), reads_ok=reads_ok, method=method,
-            error=(f"{skipped} not read: the {self._device_budget_s:.0f} s budget ran out"
-                   if skipped else (None if reads_ok else "no successful reads")),
+            reads_attempted=len(pts), reads_ok=reads_ok, method=method, error=error,
         )
         return samples, health
 
-    async def _read_single(self, address: str, p: dict, ts: int) -> Sample:
+    def _note_answer(self, address: str, device_id: Any, health: PollHealth) -> None:
+        """Start, lengthen or end a silent device's backoff from its cycle's result."""
+        if health.method == "no-answer":
+            fails = (self._dark.get(address) or [0, 0])[0] + 1
+            skip = min(2 ** (fails - 1), self._dark_cap)
+            self._dark[address] = [fails, skip]
+            logger.warning("device %s (%s) gave no answer; asked again in %d cycle(s)",
+                           device_id, address, skip + 1)
+        elif health.reads_ok and self._dark.pop(address, None):
+            logger.info("device %s (%s) is answering again", device_id, address)
+
+    async def _read_single(self, address: str, p: dict, ts: int) -> tuple[Sample, bool]:
         """Per-object fallback for devices that reject RPM (e.g. some Trane UCs). The present
         value first: a point that does not give that is comm-loss, and asking it for three
-        more properties would only cost three more timeouts."""
+        more properties would only cost three more timeouts. Also says whether the device
+        replied at all (False: the present-value read timed out)."""
         props: dict[str, Any] = {}
+        heard = True
         for prop in _SAMPLE_PROPS:
             try:
                 props[prop] = await self._app.read_property(
@@ -381,8 +453,9 @@ class Collector:
             except Exception:  # a raised, non-normalized error -> treat as missing
                 pass
             if prop == "present-value" and (prop not in props or _is_error(props[prop])):
+                heard = not _no_response(props.get(prop))
                 break
-        return _sample_from(p, props, ts)
+        return _sample_from(p, props, ts), heard
 
     async def _maybe_read_priorities(self) -> None:
         """Every priority_interval_s, read the priority array of every logged commandable
@@ -409,6 +482,8 @@ class Collector:
         for address, pts in by_device.items():
             if self._stop.is_set():
                 return
+            if address in self._dark:                    # not answering the poll either
+                continue
             readings += await self._read_priorities(address, pts)
         out = self._dal.record_commands(ts, readings,
                                         log_values_at_or_below=priority.OVERRIDE_MAX_LEVEL)
@@ -433,6 +508,8 @@ class Collector:
                 # It used to escape the whole pass after _next_priority had moved on, and
                 # every controller's readings from that pass were lost (2026-11-06 review, M8).
                 rows = None
+            if address in self._rpm_ok and _no_response(rows):
+                break                                    # gone quiet: as the poll (M7)
             got: dict[str, Any] = {}
             if rows is None or _is_error(rows):          # no RPM: one at a time, as the poll
                 for p in chunk:
@@ -443,6 +520,8 @@ class Collector:
                         got[oid] = await self._app.read_property(address, oid, "priority-array")
                     except Exception:  # a raised, non-normalized error -> unread this time
                         pass
+                    if _no_response(got.get(oid)):
+                        return out
             else:
                 got = {str(objid): value for objid, _prop, _idx, value in rows}
             for p in chunk:

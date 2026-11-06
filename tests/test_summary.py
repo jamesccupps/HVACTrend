@@ -88,8 +88,9 @@ def test_the_model_is_handed_what_the_detectors_found_each_under_an_id(tmp_path)
     assert set(inp["items"]) == {"I7", "A3", "N1"}
     assert inp["items"]["I7"]["severity"] == "high"               # an ACTION incident
     text = summary.render(inp)
-    assert "[I7] AC-1 · Discharge air not meeting its setpoint · ACTION" in text
-    assert "[A3] device-stale · SC-1 silent for 31 min" in text
+    # names and text from the field arrive quoted (2026-11-06 review, M2)
+    assert '[I7] AC-1 · "Discharge air not meeting its setpoint" · ACTION' in text
+    assert '[A3] device-stale · "SC-1 silent for 31 min' in text
     assert "[N1] AC-1 · " in text and "Belt replaced on AC-1" in text
     # the unit picture: the rules' own gate, so the hour of settling is not judged
     line = next(ln for ln in text.splitlines() if ln.startswith("AC-1: "))
@@ -97,7 +98,7 @@ def test_the_model_is_handed_what_the_detectors_found_each_under_an_id(tmp_path)
     assert "within 2 °F 0% of that time" in line
     assert "AC-9: did not run (vacant floor)" in text
     # The operator's site knowledge goes in as "not faults", and a set-aside point is not read
-    assert "Points named Filter Status* on AC-* are set aside: the filter switches lie" in text
+    assert 'Points named "Filter Status*" on AC-* are set aside: "the filter switches lie"' in text
     assert "mixed air" not in line
     dal.close()
 

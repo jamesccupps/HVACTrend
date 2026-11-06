@@ -510,6 +510,14 @@ def _is_error(v: Any) -> bool:
         "ErrorType", "ErrorPDU", "AbortPDU", "RejectPDU")
 
 
+def _no_response(v: Any) -> bool:
+    """True for the abort bacpypes3 returns when a request got no reply at all, after its own
+    retries: the device or its trunk is not there. A reject or an error is a reply, from a
+    device that is (2026-11-06 review, M7)."""
+    return (type(v).__name__ == "AbortPDU"
+            and str(getattr(v, "apduAbortRejectReason", "")) in ("no-response", "noResponse"))
+
+
 def _maybe_str(v: Any) -> Optional[str]:
     if v is None or _is_error(v):
         return None

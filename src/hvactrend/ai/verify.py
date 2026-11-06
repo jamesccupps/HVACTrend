@@ -35,9 +35,10 @@ conclusion from correct numbers. This narrows the gap; it does not close it.
 
 from __future__ import annotations
 
+import functools
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 # metric keywords -> the role whose canonical point carries that measurement
 _METRIC_ROLES: list[tuple[tuple[str, ...], str, str]] = [
@@ -70,29 +71,61 @@ _VAGUE_TIME = [
     (r"\bduring the (?:peak|afternoon|morning)\b", "unanchored period"),
 ]
 
-_UNIT_RE = re.compile(r"\b(AC-\d{1,2}|HV\d)\b", re.I)
-# The compact fleet form the model actually writes: "AC-3,4,5,6,8,9,10,12" or
-# "AC-1/3/4/5". A naive \bAC-\d+\b finds only the first and reports "lists 1 unit",
-# which turns a correct FAIL into a misleading one.
-_UNIT_RUN_RE = re.compile(r"\bAC-(\d{1,2})((?:\s*[,/]\s*\d{1,2})+)", re.I)
-# "64.7-70.4F", "0.06 to 1.2 in.wc", "70.5-80.2F"
+# "64.7-70.4F", "64.7 °F to 70.4 °F", "0.06 to 1.2 in. w.c.": the summary is told to write
+# °F and in. w.c. with every number, and the old pattern wanted the F or "in.wc" straight
+# after the number, so only % ranges were ever checked (2026-11-06 review, M12).
+_UNIT_TXT = r"°?\s*(?:F\b|degF\b|in\.?\s?w\.?\s?c\b\.?|%)"
 _RANGE_RE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*(F\b|degF|in\.?\s?wc|%)", re.I)
+    r"(\d+(?:\.\d+)?)(?:\s*" + _UNIT_TXT + r")?\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*(" + _UNIT_TXT
+    + ")", re.I)
+_LIMIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*°?\s*F?\s*(?:alarm[- ]high|high limit|alarm_hi)", re.I)
 
 
 def _sentences(text: str) -> list[str]:
-    return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if s.strip()]
+    # a full stop ends a sentence only before something that is not lower case: "in. w.c."
+    # is one unit, not two sentences
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[^a-z])|\n+", text or "")
+            if s.strip()]
 
 
-def units_in(s: str) -> list[str]:
+@functools.lru_cache(maxsize=8)
+def _unit_res(codes: frozenset) -> tuple:
+    """(single, run) patterns for THIS plant's unit codes. They knew only AC-n and HVn, one
+    building's naming: at a site of AHU-1 and RTU-2 the count and unknown-unit checks never
+    fired (review M12). A code ending in a number lends its prefix to any number, so a unit
+    that does not exist ("AC-99") is still seen, and then reported."""
+    prefixes, plain = set(), set()
+    for c in codes:
+        m = re.match(r"^(.*[A-Za-z][^\d]*?)(\d{1,3})$", c)
+        if m:
+            prefixes.add(m.group(1))
+        elif re.search(r"[A-Za-z]", c):
+            plain.add(c)
+    alts = ([re.escape(p) + r"\d{1,3}" for p in sorted(prefixes, key=len, reverse=True)]
+            + [re.escape(c) for c in sorted(plain, key=len, reverse=True)])
+    single = re.compile(r"\b(" + "|".join(alts) + r")\b", re.I) if alts else None
+    # The compact fleet form the model actually writes: "AC-3,4,5,6,8,9,10,12" or
+    # "AC-1/3/4/5". A naive \bAC-\d+\b finds only the first and reports "lists 1 unit",
+    # which turns a correct FAIL into a misleading one.
+    run = (re.compile(r"\b(" + "|".join(re.escape(p) for p in sorted(prefixes, key=len,
+                                                                    reverse=True))
+                      + r")(\d{1,3})((?:\s*[,/]\s*\d{1,3})+)", re.I) if prefixes else None)
+    return single, run
+
+
+def units_in(s: str, codes: Iterable[str]) -> list[str]:
     """Every unit code a sentence names, including the compact run form."""
+    single, run = _unit_res(frozenset(str(c).upper() for c in codes))
     found: list[str] = []
-    for m in _UNIT_RUN_RE.finditer(s):
-        found.append(f"AC-{int(m.group(1))}")
-        for n in re.findall(r"\d{1,2}", m.group(2)):
-            found.append(f"AC-{int(n)}")
-    for u in _UNIT_RE.findall(s):
-        found.append(u.upper())
+    if run:
+        for m in run.finditer(s):
+            head = m.group(1).upper()
+            found.append(f"{head}{m.group(2)}")        # as written: AHU-01 is a code too
+            for n in re.findall(r"\d{1,3}", m.group(3)):
+                found.append(f"{head}{n}")
+    if single:
+        for u in single.findall(s):
+            found.append(u.upper())
     return list(dict.fromkeys(found))
 
 
@@ -125,8 +158,10 @@ def _check(name: str, status: str, claim: str, detail: str, **extra) -> dict:
     return out
 
 
-def verify_report(dal: Any, report_id: int) -> dict:
-    """Verify one stored report's claims against the data it was built from."""
+def verify_report(dal: Any, report_id: int, config: Any = None) -> dict:
+    """Verify one stored report's claims against the data it was built from. `config` says
+    which inputs there were to be stale (the baselines, the weather); without it those
+    checks are left out."""
     row = dal._conn.execute(
         "SELECT id, kind, period_start_utc, period_end_utc, prose, created_utc "
         "FROM reports WHERE id=?", (report_id,)).fetchone()
@@ -149,9 +184,9 @@ def verify_report(dal: Any, report_id: int) -> dict:
         for s in _sentences(text):
             checks.extend(_verify_sentence(dal, s, origin, start, end, known))
 
-    checks.extend(_verify_inputs_were_fresh(dal, rid, end))
+    checks.extend(_verify_inputs_were_fresh(dal, rid, end, config))
 
-    fails = [c for c in checks if c["status"] == "fail"]
+    fails =[c for c in checks if c["status"] == "fail"]
     warns = [c for c in checks if c["status"] == "warn"]
     return {
         "report_id": rid, "kind": kind,
@@ -169,7 +204,7 @@ def verify_report(dal: Any, report_id: int) -> dict:
 def _verify_sentence(dal: Any, s: str, origin: str, start: int, end: int,
                      known: set) -> list[dict]:
     out: list[dict] = []
-    units = units_in(s)
+    units = units_in(s, known)
 
     # 1) a stated count must match the list it introduces. "Five AHUs (AC-3,4,5,6,8,
     #    9,10,12)" lists eight. This is pure arithmetic and the model gets it wrong.
@@ -243,7 +278,7 @@ def _verify_sentence(dal: Any, s: str, origin: str, start: int, end: int,
                     claimed=[lo_c, hi_c], actual=[round(lo_a, 1), round(hi_a, 1)]))
 
     # 5) a cited alarm limit must match what is configured on that unit
-    lim = re.search(r"(\d+(?:\.\d+)?)\s*F?\s*(?:alarm[- ]high|high limit|alarm_hi)", s, re.I)
+    lim = _LIMIT_RE.search(s)
     if lim and role_unit and len(dict.fromkeys(units)) == 1:
         role, _u = role_unit
         pid = _canon(dal, units[0], role)
@@ -275,7 +310,16 @@ def input_freshness_now(dal: Any, end_utc: int) -> dict:
     return out
 
 
-def _verify_inputs_were_fresh(dal: Any, report_id: int, end: int) -> list[dict]:
+def _weather_on(config: Any) -> bool:
+    w = config.get("weather") if config else None
+    w = w.as_dict() if hasattr(w, "as_dict") else (w or {})
+    if not float(w.get("refresh_interval_s", 3600) or 0):
+        return False
+    return any(bool((w.get(src) or {}).get("enabled")) for src in ("open_meteo", "tempest"))
+
+
+def _verify_inputs_were_fresh(dal: Any, report_id: int, end: int,
+                              config: Any = None) -> list[dict]:
     """Was the report computed from CURRENT inputs? A report against 49-hour-old
     baselines is wrong in a way no sentence-level check can see: every sigma, every
     'vs normal' and every drift projection is measured against stale normals. That
@@ -284,31 +328,39 @@ def _verify_inputs_were_fresh(dal: Any, report_id: int, end: int) -> list[dict]:
 
     Reads the freshness RECORDED AT GENERATION TIME. Reports written before that was
     recorded report 'unknown' rather than a number computed from today's state, which
-    would be measuring the wrong thing and calling it evidence."""
+    would be measuring the wrong thing and calling it evidence.
+
+    Each input is checked only when the program has it. With `ai.baselines` off (the
+    default) nothing reads baselines, yet every report was warned "predates tracking", so
+    scripts/verify_report.py could never exit 0; and a plant with no weather source failed
+    every report for having no weather (2026-11-06 review, M12)."""
+    from .model import baselines_on
     out: list[dict] = []
-    rec = {}
-    try:
-        row = dal._conn.execute(
-            "SELECT inputs_json FROM reports WHERE id=?", (report_id,)).fetchone()
-        if row and row[0]:
-            import json
-            rec = json.loads(row[0])
-    except (Exception,):          # column absent on a DB predating the migration
+    if baselines_on(config):
         rec = {}
-    age_h = rec.get("baseline_age_h")
-    if age_h is None:
-        out.append(_check(
-            "baseline_freshness", "warn", "(report inputs)",
-            "input freshness was not recorded for this report (predates tracking) — "
-            "cannot confirm the learned baselines were current when it ran"))
-    else:
-        out.append(_check(
-            "baseline_freshness", "fail" if age_h > 36 else
-            ("warn" if age_h > 26 else "pass"),
-            "(report inputs)",
-            f"learned baselines were {age_h:.1f} h old when this report ran "
-            f"(rebuild interval is daily; every sigma is measured against these)",
-            age_hours=age_h))
+        try:
+            row = dal._conn.execute(
+                "SELECT inputs_json FROM reports WHERE id=?", (report_id,)).fetchone()
+            if row and row[0]:
+                import json
+                rec = json.loads(row[0])
+        except (Exception,):          # column absent on a DB predating the migration
+            rec = {}
+        age_h = rec.get("baseline_age_h")
+        if age_h is None:
+            out.append(_check(
+                "baseline_freshness", "warn", "(report inputs)",
+                "input freshness was not recorded for this report (predates tracking) — "
+                "cannot confirm the learned baselines were current when it ran"))
+        else:
+            out.append(_check(
+                "baseline_freshness", "fail" if age_h > 36 else
+                ("warn" if age_h > 26 else "pass"),
+                "(report inputs)",
+                f"learned baselines were {age_h:.1f} h old when this report ran "
+                f"(rebuild interval is daily; every sigma is measured against these)",
+                age_hours=age_h))
+    if not _weather_on(config):
         return out
     w = dal._conn.execute(
         "SELECT MAX(ts_utc) FROM weather WHERE ts_utc<=?", (end,)).fetchone()
@@ -318,9 +370,9 @@ def _verify_inputs_were_fresh(dal: Any, report_id: int, end: int) -> list[dict]:
             "weather_freshness", "fail" if age_h > 6 else
             ("warn" if age_h > 2 else "pass"), "(report inputs)",
             f"newest weather row was {age_h:.1f} h before the window end "
-            f"(the economizer checks read this)", age_hours=round(age_h, 1)))
+            f"(the summary's weather line reads this)", age_hours=round(age_h, 1)))
     else:
         out.append(_check("weather_freshness", "fail", "(report inputs)",
-                          "NO weather data in or before this window — the economizer "
-                          "checks were skipped entirely"))
+                          "NO weather data in or before this window — the summary had no "
+                          "weather to go on"))
     return out

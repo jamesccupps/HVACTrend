@@ -6,14 +6,19 @@ else**.
 
 ## Read-only BACnet
 
-- **Only reads.** The program sends ReadProperty, ReadPropertyMultiple, ReadRange and
-  AtomicReadFile, plus Who-Is and Who-Has for discovery (and answers Who-Is about itself).
-  Nothing else.
+- **Only reads.** The program sends ReadProperty and ReadPropertyMultiple, plus Who-Is for
+  discovery, and answers Who-Is and Who-Has about itself with I-Am and I-Have. Nothing else.
+  (The guard also allows ReadRange, for a trend-log reader that nothing calls yet.)
 - **Allowlist-first.**
-  - Every request goes through a guard (`src/hvactrend/bacnet/readonly.py`). It allows the
-    reads; a service it does not recognise is refused, so it fails closed.
+  - Every request the BACnet stack sends goes through a guard
+    (`src/hvactrend/bacnet/readonly.py`), which sees the actual request. It allows the reads;
+    a service it does not recognise is refused, so it fails closed.
   - The application object HVACTrend talks to the network through has **no write method at
     all**: there is nothing in the program that could issue a write.
+- **Nothing can write to HVACTrend either.** Like any BACnet device it has a device object,
+  which other devices can read. A WriteProperty to it is refused (write access denied), and
+  WritePropertyMultiple and SubscribeCOV are rejected. Its own timeouts live on that object, so
+  a write from elsewhere on the network could otherwise make every read fail.
 - **Disruptive services are blocked unconditionally, with no setting to enable them:**
   - ReinitializeDevice;
   - DeviceCommunicationControl;
