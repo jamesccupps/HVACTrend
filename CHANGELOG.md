@@ -17,6 +17,12 @@
   remote access), which can start and stop them.
 - Any point with a value can be watched, logged or not, through the same read-only stack.
 
+**From your phone, anywhere**
+- `api.local_hosts` may name a network as well as an address. On a Tailscale tailnet where
+  every device is yours, `["100.64.0.0/10", "fd7a:115c:a1e0::/48"]` gives your phone every
+  page. [docs/install.md](docs/install.md) shows the setup, with `tailscale serve` for an HTTPS
+  address.
+
 **Security**
 - The pages answer only to this computer's own names and addresses, plus any in the new
   `api.allowed_hosts`. A web page opened on this computer could otherwise use DNS rebinding

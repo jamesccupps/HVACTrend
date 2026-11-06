@@ -254,11 +254,33 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     # Filled on first request, not here: _cfg() is defined further down in create_app, and
     # resolving this eagerly would read it before it exists.
     _LOCAL_HOSTS: set = set()
+    _LOCAL_NETS: list = []
 
     def _is_local(client_host: str) -> bool:
+        """This computer, or an address in api.local_hosts. An entry there may be a whole
+        network ("100.64.0.0/10"): the operator's own devices on a private network such as
+        Tailscale, where every device is theirs, get every page (2026-11-06). A phone through
+        `tailscale serve` arrives with its own tailnet address: uvicorn takes it from the
+        proxy's X-Forwarded-For, since the proxy connects from this computer."""
+        import ipaddress
         if not _LOCAL_HOSTS:
-            _LOCAL_HOSTS.update(_local_hosts())
-        return client_host in _LOCAL_HOSTS
+            hosts = _local_hosts()
+            _LOCAL_HOSTS.update(h for h in hosts if "/" not in h)
+            for h in hosts:
+                if "/" in h:
+                    try:
+                        _LOCAL_NETS.append(ipaddress.ip_network(h, strict=False))
+                    except ValueError:
+                        logger.warning("api.local_hosts: %r is not an address or a network", h)
+        if client_host in _LOCAL_HOSTS:
+            return True
+        if _LOCAL_NETS:
+            try:
+                ip = ipaddress.ip_address(client_host)
+            except ValueError:
+                return False
+            return any(ip in n for n in _LOCAL_NETS if n.version == ip.version)
+        return False
 
     @app.middleware("http")
     async def _remote_viewer_only(request, call_next):
@@ -316,7 +338,8 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         and api.allowed_hosts (a DNS alias the techs use). `testserver` is the test
         client's; no public DNS name can be it."""
         import socket
-        names = {"localhost", "127.0.0.1", "::1", "testserver", *_local_hosts()}
+        names = {"localhost", "127.0.0.1", "::1", "testserver",
+                 *(h for h in _local_hosts() if "/" not in h)}      # a network is not a name
         try:
             names.update({socket.gethostname(), socket.getfqdn()})
         except OSError:

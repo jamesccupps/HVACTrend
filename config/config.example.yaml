@@ -161,7 +161,10 @@ api:
   remote_viewer_only: true             # other computers get the trend viewer and the Realtime
                                        # page, and nothing else: no settings, no secrets, no
                                        # backups, no point selection
-  local_hosts: []                      # extra addresses to treat as "this computer"
+  local_hosts: []                      # extra addresses, or networks such as "100.64.0.0/10",
+                                       # to treat as "this computer": every page. Only for a
+                                       # network where every device is yours (docs/install.md,
+                                       # "From your phone, anywhere")
   allowed_hosts: []                    # extra NAMES the pages answer to, e.g. a DNS alias the
                                        # techs type. This computer's own names and addresses
                                        # always work; any other name gets "unknown host".

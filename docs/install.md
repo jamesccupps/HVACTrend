@@ -93,6 +93,30 @@ Then restart: close and reopen `start.bat`, or restart the **HVACTrend Server** 
 touched. The database upgrades itself on start; new settings take their defaults, and
 `config/config.example.yaml` shows them.
 
+## From your phone, anywhere (Tailscale)
+
+[Tailscale](https://tailscale.com) joins your own devices into a private network, so your phone
+can reach HVACTrend from anywhere without opening anything to the internet.
+
+1. Install Tailscale on the HVACTrend computer and on your phone, signed in to the same
+   account. Turn on MagicDNS and HTTPS certificates in the Tailscale admin console (DNS page).
+2. On the HVACTrend computer, put its Tailscale name (`<computer>.<tailnet>.ts.net`) in
+   `api.allowed_hosts`.
+3. Give it an HTTPS address. On that computer:
+   ```
+   tailscale serve --bg 8000
+   ```
+   The pages are then at `https://<computer>.<tailnet>.ts.net`, with a real certificate, from
+   any of your devices. It lasts across restarts; `tailscale serve reset` undoes it.
+4. If every device on your tailnet is yours, add its networks to `api.local_hosts`, so your
+   phone gets every page and not only the trend viewer and Realtime:
+   ```yaml
+   local_hosts: ["100.64.0.0/10", "fd7a:115c:a1e0::/48"]
+   ```
+   Then restart HVACTrend.
+
+Never use **Tailscale Funnel** for this: it puts the pages on the public internet.
+
 ## Moving to another computer
 
 Stop the server, then copy these to the new installation:

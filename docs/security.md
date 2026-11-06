@@ -72,6 +72,10 @@ routers handle.
   sweep or a backup. Everything that reads the controllers is a POST for the same reason.
 - **Small bodies, no framing.** Request bodies over 512 KB are refused, and the pages may
   not be framed by another site.
+- **Your own devices, by network:** `api.local_hosts` may name a network as well as an
+  address. Everything in it is treated as this computer and gets every page, so name only a
+  network where every device is yours, such as your own Tailscale tailnet
+  (docs/install.md). Behind `tailscale serve` a device arrives with its own tailnet address.
 - **Not settable from the page:** `api.host`, `api.port`, `api.auth`, `api.remote_viewer_only`,
   `api.local_hosts` and `api.allowed_hosts` are changed in `config.yaml` only.
 

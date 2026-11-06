@@ -107,7 +107,7 @@ Points to ignore, rules that are not possible here, overrides held on purpose: s
 | `host` | `127.0.0.1` | This computer only. `0.0.0.0` lets other computers open the trend viewer. |
 | `port` | `8000` | |
 | `remote_viewer_only` | `true` | Other computers get the trend viewer and the Realtime page only: no settings, secrets, backups or point selection |
-| `local_hosts` | `[]` | Extra addresses to treat as this computer |
+| `local_hosts` | `[]` | Extra addresses, or networks (`100.64.0.0/10`), to treat as this computer: they get every page. Only a network where every device is yours. Not settable from the Settings page |
 | `allowed_hosts` | `[]` | Extra names the pages answer to (a DNS alias people type). This computer's own names and addresses always work. Not settable from the Settings page |
 | `auth.enabled` | `false` | Require the UI token (Settings page) for any change |
 
