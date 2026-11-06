@@ -300,6 +300,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     # it could change or delete the phone-alert topic or download the database (H1).
     _BODY_MAX = 512 * 1024      # the largest real body is a saved view or a long sequence text
     _HOSTS: dict = {"names": frozenset(), "at": -1e9}
+    _REFUSED: set = set()
 
     def _allowed_hosts() -> frozenset:
         """The names this server answers to: loopback, this computer's names and addresses,
@@ -353,6 +354,11 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     async def _gate(request, call_next):
         from fastapi.responses import JSONResponse
         if not _host_ok(request.headers.get("host", "")):
+            host = (request.headers.get("host") or "")[:100]
+            if host not in _REFUSED and len(_REFUSED) < 50:   # once per name, so it can be found
+                _REFUSED.add(host)
+                logger.warning("refused a request for the host name %r: if that is this server, "
+                               "add it to api.allowed_hosts in config.yaml", host)
             return JSONResponse({"detail": "unknown host name; add it to api.allowed_hosts "
                                            "in config.yaml if it is this server's"},
                                 status_code=421)

@@ -42,7 +42,7 @@ def _app(tmp_path, extra: str = ""):
     return create_app(str(cfg), enable_bacnet=False)
 
 
-def test_a_foreign_host_name_is_refused(tmp_path):
+def test_a_foreign_host_name_is_refused(tmp_path, caplog):
     """DNS rebinding: a page whose own name now points at 127.0.0.1 sends ITS name."""
     from fastapi.testclient import TestClient
     app = _app(tmp_path, "api: {allowed_hosts: [trends.example.lan]}\n")
@@ -52,6 +52,9 @@ def test_a_foreign_host_name_is_refused(tmp_path):
         for ok in ("localhost:8000", "127.0.0.1", "[::1]:8000", "TRENDS.example.lan:8000",
                    socket.gethostname()):
             assert c.get("/health", headers={"host": ok}).status_code == 200, ok
+        c.get("/health", headers={"host": "evil.example"})
+    said = [r.getMessage() for r in caplog.records if "allowed_hosts" in r.getMessage()]
+    assert len(said) == 2 and "'evil.example'" in said[0]   # each name once: findable
 
 
 def test_a_write_from_another_site_is_refused(tmp_path):
