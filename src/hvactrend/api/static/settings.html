@@ -52,6 +52,13 @@
   .grp h3{font-size:12px;color:var(--amber);margin:14px 0 4px;text-transform:uppercase;letter-spacing:.5px;}
   .unitrow{padding:8px 0;border-bottom:1px solid #1a212d;}
   .uhead{font-size:13px;margin-bottom:3px;} .uhead b{color:var(--accent2);}
+  /* Phones (2026-11-06): the nav is one line that scrolls sideways instead of widening the
+     page, and panels side by side are stacked. */
+  @media (max-width: 760px) {
+    header { overflow-x:auto; scrollbar-width:none; gap:14px; }
+    header::-webkit-scrollbar { display:none; }
+    header h1, header a, header .status { white-space:nowrap; flex:none; }
+  }
 </style>
 </head>
 <body>

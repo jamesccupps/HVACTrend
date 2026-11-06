@@ -107,6 +107,18 @@
     color:var(--fg); }
   .achip.critical { border-color:var(--crit); }
   .achip b { color:var(--amber); font-weight:normal; }
+  /* Phones (2026-11-06): the nav is one line that scrolls sideways instead of widening the
+     page, and panels side by side are stacked. */
+  @media (max-width: 760px) {
+    header { overflow-x:auto; scrollbar-width:none; gap:14px; }
+    header::-webkit-scrollbar { display:none; }
+    header h1, header a, header .status { white-space:nowrap; flex:none; }
+    body { height:auto; min-height:100vh; }
+    .wrap { flex-direction:column; flex:none; }
+    main { order:-1; overflow:visible; padding:12px; }
+    aside { width:auto; border-right:none; border-top:1px solid var(--line); overflow:visible; }
+    table { display:block; overflow-x:auto; }
+  }
 </style>
 </head>
 <body>

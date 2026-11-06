@@ -57,6 +57,13 @@
   .flag{color:var(--fault);font-size:11px;}
   .role{color:var(--dim);font-size:11px;}
   .scroll{overflow-x:auto;}
+  /* Phones (2026-11-06): the nav is one line that scrolls sideways instead of widening the
+     page, and panels side by side are stacked. */
+  @media (max-width: 760px) {
+    header { overflow-x:auto; scrollbar-width:none; gap:14px; }
+    header::-webkit-scrollbar { display:none; }
+    header h1, header a, header .status { white-space:nowrap; flex:none; }
+  }
 </style>
 </head>
 <body>

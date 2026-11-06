@@ -77,6 +77,17 @@
   .rescan .warn { color:var(--amber); }
   .rescan .bad { color:var(--fault); }
   .rescan .ok { color:var(--accent); }
+  /* Phones (2026-11-06): the nav is one line that scrolls sideways instead of widening the
+     page, and panels side by side are stacked. */
+  @media (max-width: 760px) {
+    header { overflow-x:auto; scrollbar-width:none; gap:14px; }
+    header::-webkit-scrollbar { display:none; }
+    header h1, header a, header .status { white-space:nowrap; flex:none; }
+    .wrap { flex-direction:column; height:auto; }
+    aside { width:auto; max-height:38vh; border-right:none; border-bottom:1px solid var(--line); }
+    main { overflow:visible; }
+    main table { display:block; overflow-x:auto; }
+  }
 </style>
 </head>
 <body>

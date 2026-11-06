@@ -119,6 +119,18 @@
   .colpick button { background:var(--panel2); color:var(--fg); border:1px solid var(--line);
     border-radius:5px; padding:4px 12px; cursor:pointer; font:inherit; font-size:12px; }
   .colpick button.primary { background:var(--accent2); color:#04121f; border-color:var(--accent2); font-weight:bold; }
+  /* Phones (2026-11-06): the nav is one line that scrolls sideways instead of widening the
+     page, and panels side by side are stacked. */
+  @media (max-width: 760px) {
+    header { overflow-x:auto; scrollbar-width:none; gap:14px; }
+    header::-webkit-scrollbar { display:none; }
+    header h1, header a, header .status { white-space:nowrap; flex:none; }
+    .units { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+    .units::-webkit-scrollbar { display:none; }
+    .units button { flex:none; }
+    main { padding:10px; }
+    table.fleet { display:block; overflow-x:auto; }
+  }
 </style>
 </head>
 <body>
