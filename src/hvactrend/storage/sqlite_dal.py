@@ -162,6 +162,12 @@ class SQLiteDAL(DAL):
 
         On re-discovery, refreshes discovery-derived fields + last_seen_utc but
         keeps created_utc.
+
+        COALESCE, as upsert_point does: a re-discovery whose identity read failed passed
+        None for the name, vendor and model, and discovery never knows the router fields at
+        all, so one re-scan blanked a controller's name and reset its router flag
+        (2026-11-06 review). The address and its network number are what a Who-Is answers,
+        so those two are taken as they come.
         """
         now = int(time.time())
         row = self._conn.execute(
@@ -171,12 +177,17 @@ class SQLiteDAL(DAL):
             " segmentation, last_seen_utc, created_utc, notes) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(site_id, device_instance) DO UPDATE SET "
-            " name=excluded.name, address=excluded.address, "
-            " network_number=excluded.network_number, mac_address=excluded.mac_address, "
-            " router_instance=excluded.router_instance, vendor_id=excluded.vendor_id, "
-            " vendor_name=excluded.vendor_name, model_name=excluded.model_name, "
-            " firmware=excluded.firmware, is_router=excluded.is_router, "
-            " rpm_supported=excluded.rpm_supported, segmentation=excluded.segmentation, "
+            " name=COALESCE(excluded.name, devices.name), address=excluded.address, "
+            " network_number=excluded.network_number, "
+            " mac_address=COALESCE(excluded.mac_address, devices.mac_address), "
+            " router_instance=COALESCE(excluded.router_instance, devices.router_instance), "
+            " vendor_id=COALESCE(excluded.vendor_id, devices.vendor_id), "
+            " vendor_name=COALESCE(excluded.vendor_name, devices.vendor_name), "
+            " model_name=COALESCE(excluded.model_name, devices.model_name), "
+            " firmware=COALESCE(excluded.firmware, devices.firmware), "
+            " is_router=MAX(excluded.is_router, devices.is_router), "
+            " rpm_supported=COALESCE(excluded.rpm_supported, devices.rpm_supported), "
+            " segmentation=COALESCE(excluded.segmentation, devices.segmentation), "
             " last_seen_utc=excluded.last_seen_utc "
             "RETURNING id",
             (device.site_id, device.device_instance, device.name, device.address,
@@ -900,6 +911,16 @@ class SQLiteDAL(DAL):
             f"SELECT MAX(m) AS m FROM (SELECT (SELECT MAX(bucket_utc) FROM {table} s "
             f"WHERE s.point_id = p.id) AS m FROM points p)").fetchone()
         return None if r is None or r["m"] is None else int(r["m"])
+
+    def newest_sample_ts(self, until: Optional[int] = None) -> Optional[int]:
+        """The newest raw sample's timestamp, optionally only those at or before `until`.
+        A lone MAX on idx_samples_ts: O(log n) either way."""
+        if until is None:
+            row = self._conn.execute("SELECT MAX(ts_utc) FROM samples").fetchone()
+        else:
+            row = self._conn.execute("SELECT MAX(ts_utc) FROM samples WHERE ts_utc <= ?",
+                                     (int(until),)).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
 
     def samples_time_extent(self) -> dict:
         """Just the min/max sample timestamps (NO count). Each aggregate is a lone

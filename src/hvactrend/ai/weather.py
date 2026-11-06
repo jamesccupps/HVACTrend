@@ -187,9 +187,36 @@ def update_weather(dal: Any, config: Any = None, *, http_get: Callable = _http_g
                    now_utc: Optional[int] = None) -> dict:
     """Fetch + derive + store hourly weather up to now. Idempotent (upsert on ts_utc).
     Uses the on-site Tempest (WeatherFlow cloud) when weather.tempest.enabled, else
-    Open-Meteo from config coordinates. Returns a summary."""
-    now = now_utc if now_utc is not None else int(time.time())
+    Open-Meteo from config coordinates. Returns a summary.
 
+    The two halves are separate so a server can run the network half in a worker thread:
+    on a BAS network with no internet, a GET waits out DNS and the connect timeout, and on
+    the event loop that froze polling and every page for 15-25 s an hour (2026-11-06
+    review, M4). The database half stays where the connection lives."""
+    return store_weather(dal, fetch_weather(config, http_get=http_get), now_utc=now_utc)
+
+
+def _fetch_error(exc: BaseException, secret: Optional[str]) -> str:
+    """An error for the log and the page, without the Tempest token. httpx puts the full
+    URL in an HTTPStatusError, query string and all, and the token rides in the query: a
+    revoked token, a 429 or a 5xx wrote it into the log every hour (M3)."""
+    try:
+        import httpx
+        if isinstance(exc, httpx.HTTPStatusError):
+            return f"HTTP {exc.response.status_code}"
+    except ImportError:
+        pass
+    text = f"{type(exc).__name__}: {exc}"
+    if secret:
+        from urllib.parse import quote
+        for form in {secret, quote(secret, safe="")}:
+            text = text.replace(form, "***")
+    return text[:300]
+
+
+def fetch_weather(config: Any = None, *, http_get: Callable = _http_get) -> dict:
+    """The network half: {"rows": [...], "source": s}, or {"stored": 0, "error": ...}.
+    Touches no database, so it may run in any thread."""
     tcfg = _tempest_cfg(config)
     if tcfg and tcfg["enabled"] and tcfg["mode"] == "cloud":
         token = os.environ.get("TEMPEST_TOKEN")
@@ -215,15 +242,23 @@ def update_weather(dal: Any, config: Any = None, *, http_get: Callable = _http_g
         else:
             rows = fetch_open_meteo(lat, lon, http_get=http_get)
     except Exception as exc:  # noqa: BLE001 — httpx.HTTPError/OSError/JSON etc. all become a value
-        return {"stored": 0, "source": source, "error": f"{source} fetch failed: {exc}"}
+        return {"stored": 0, "source": source, "error": f"{source} fetch failed: "
+                + _fetch_error(exc, token if source == "tempest" else None)}
+    return {"rows": rows, "source": source}
 
+
+def store_weather(dal: Any, fetched: dict, *, now_utc: Optional[int] = None) -> dict:
+    """The database half: store what fetch_weather got. A fetch error is passed through."""
+    if "rows" not in fetched:
+        return fetched
+    now = now_utc if now_utc is not None else int(time.time())
     stored = 0
-    for row in rows:
+    for row in fetched["rows"]:
         if row["ts_utc"] > now + 3600:        # skip far-future forecast hours
             continue
         dal.upsert_weather(derive(row), updated_utc=now)
         stored += 1
-    return {"stored": stored, "source": source}
+    return {"stored": stored, "source": fetched.get("source")}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

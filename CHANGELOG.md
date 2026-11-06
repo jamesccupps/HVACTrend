@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased — fixes from an external review
+
+**Security**
+- The pages answer only to this computer's own names and addresses, plus any in the new
+  `api.allowed_hosts`. A web page opened on this computer could otherwise use DNS rebinding
+  to act as the operator: change or delete the phone-alert topic, or download the database.
+- Requests that change something are refused when the browser says they come from another
+  site. The three reads of the controllers that were GETs are now POSTs: live point reads,
+  device object reads, and the coverage page's live check.
+- Request bodies over 512 KB are refused, and the pages can't be framed by another site.
+- The Settings page can no longer change `api.remote_viewer_only`, `api.local_hosts` or
+  `api.allowed_hosts`.
+- The Tempest token no longer appears in a weather error, which went to the log.
+- A point name that starts with `=`, `+`, `-` or `@` is kept as text in CSV exports, not run
+  as a spreadsheet formula.
+
+**Alarms**
+- The watchdog sends a last-resort push when it can't run: an unreadable `config.yaml`
+  (including a YAML syntax error), a database that won't open, or checks that crash. It
+  needs only the topic, sends at most once an hour, and says when it's running again.
+- The watchdog's own alerts go out before the rules pass, and it waits up to 30 s for a busy
+  database.
+- Readings stamped in the future no longer switch off the data-stopped alarm. They raise
+  their own alert.
+
+**Robustness**
+- The weather fetch runs off the event loop. On a network without internet it used to
+  freeze polling and the pages for 15–25 s every hour.
+- One priority reply that won't decode no longer loses a whole pass of override readings.
+  A live read survives one too.
+- A controller reporting ±Inf or NaN is recorded as a fault, not a number.
+- If UDP 47808 is already taken by another BACnet program, startup says so instead of
+  "running" with every read timing out.
+- Report generation by hand checks `ai.enabled` and limits the window to 7 days. It also
+  runs one report at a time, shared with the scheduler, and refuses an oversized prompt.
+  The Anthropic SDK no longer retries inside the program's own retries.
+- One discovery, device read or rescan at a time.
+- `secrets.env` is written atomically, and a byte-order mark from Notepad is ignored.
+- Rediscovering a controller no longer blanks its name, model or router flags.
+- The "auth token" bar appears only when a token is actually wrong, not for "BACnet offline".
+- `__version__` comes from the package metadata.
+
 ## 0.2.0 — rescan a controller
 
 - **Rescan a controller from Point Selection** (⟲ Rescan controller). Reads one controller's

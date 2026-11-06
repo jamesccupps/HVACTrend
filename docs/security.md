@@ -53,6 +53,19 @@ routers handle.
   - secrets and backups;
   - any change.
 
+**Names, other sites, sizes**
+- **Only this computer's names.** The pages answer only to this computer's own names and
+  addresses (and any in `api.allowed_hosts`); any other name gets 421. That stops a web page
+  opened on this computer from re-pointing its own name at 127.0.0.1 (DNS rebinding) to act
+  as the operator.
+- **No changes from other sites.** A request that changes something is refused when the
+  browser says it comes from another site, so a page elsewhere cannot start a report, a
+  sweep or a backup. Everything that reads the controllers is a POST for the same reason.
+- **Small bodies, no framing.** Request bodies over 512 KB are refused, and the pages may
+  not be framed by another site.
+- **Not settable from the page:** `api.host`, `api.port`, `api.auth`, `api.remote_viewer_only`,
+  `api.local_hosts` and `api.allowed_hosts` are changed in `config.yaml` only.
+
 **Login**
 - **Off by default.** The assumption is that the controls network is the boundary: anyone on
   it can already talk BACnet to the controllers directly, which is far more than HVACTrend

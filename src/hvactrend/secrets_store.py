@@ -55,7 +55,8 @@ def _read_file(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     if not path.exists():
         return out
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig: Notepad saves a byte-order mark, which glued itself to the first key name
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -112,15 +113,32 @@ def set_secret(name: str, value: str, path: Optional[Path] = None) -> str:
 
     data = _read_file(path)
     data[env_name] = value
-    body = "".join(f"{k}={v}\n" for k, v in sorted(data.items()))
-    path.write_text(body, encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)                  # best-effort tighten (POSIX; benign on Windows)
-    except OSError:
-        pass
-
+    _write_file(path, data)
     os.environ[env_name] = value               # take effect immediately for this process
     return env_name
+
+
+def _write_file(path: Path, data: dict[str, str]) -> None:
+    """Every secret at once, atomically: written to secrets.env.tmp, then renamed over the
+    file. A crash or a full disk mid-write used to leave an empty or half file and lose every
+    secret, the alarm topic with them (2026-11-06 review). Created 0600 from the start on
+    POSIX, not chmod-ed after; on Windows the folder's permissions govern (docs/security.md).
+    The .tmp name is covered by .gitignore and by the snapshot's `secrets*` exclusion."""
+    body = "".join(f"{k}={v}\n" for k, v in sorted(data.items()))
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def clear_secret(name: str, path: Optional[Path] = None) -> None:
@@ -131,11 +149,14 @@ def clear_secret(name: str, path: Optional[Path] = None) -> None:
     env_name = SECRET_ENV[name]
     path = path or _default_path()
     data = _read_file(path)
+    from_file = data.get(env_name)
     if env_name in data:
         del data[env_name]
-        body = "".join(f"{k}={v}\n" for k, v in sorted(data.items()))
-        path.write_text(body, encoding="utf-8")
-    os.environ.pop(env_name, None)
+        _write_file(path, data)
+    # Only the value this file put there: one set in the computer's own environment would
+    # come back at the next restart, so popping it made the page say "cleared" for a while.
+    if from_file is not None and os.environ.get(env_name) == from_file:
+        os.environ.pop(env_name, None)
 
 
 def status(path: Optional[Path] = None) -> dict[str, dict[str, Any]]:

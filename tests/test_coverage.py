@@ -393,11 +393,11 @@ def test_the_coverage_route_applies_site_knowledge_then_checks_the_controllers(
         assert [(x["name"], x["why"]) for x in ac1["ignored"]] == [
             ("Filter Status|dac-3_UIP~_11", "not accurate")]
 
-        r = client.get("/api/coverage", params={"live": "true"}).json()   # no stack
+        r = client.post("/api/coverage", params={"live": "true"}).json()   # no stack
         assert r["live_checked"] is None and "not available" in r["live_error"]
 
         app.state.bacnet = object()                   # a stack is up; the read is faked
-        r = client.get("/api/coverage", params={"live": "true"}).json()
+        r = client.post("/api/coverage", params={"live": "true"}).json()
         assert sorted(read_ids) == [4, 5] and r["live_checked"] == 2
         ac1 = r["systems"][0]
         assert [x["name"] for x in ac1["suggest"]] == ["Heat Cool Mode Request|dac-3"]
@@ -407,7 +407,7 @@ def test_the_coverage_route_applies_site_knowledge_then_checks_the_controllers(
         # bounded, however many points are on offer (audit L-13)
         read_ids.clear()
         monkeypatch.setattr(app_mod, "_COVERAGE_LIVE_MAX", 1)
-        r = client.get("/api/coverage", params={"live": "true"}).json()
+        r = client.post("/api/coverage", params={"live": "true"}).json()
         assert read_ids == [4] and (r["live_checked"], r["live_skipped"]) == (1, 1)
 
 

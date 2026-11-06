@@ -103,6 +103,26 @@ def _blank(v: Any) -> Any:
     return "" if v is None else v
 
 
+# Text a spreadsheet would run as a formula. Point names and state texts come from the
+# controllers, which anyone on the BAS network can rename: "=HYPERLINK(...)" ran when the
+# export was opened in Excel (2026-11-06 review). Numbers are never strings here.
+_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _cell(v: Any) -> Any:
+    return "'" + v if isinstance(v, str) and v.startswith(_FORMULA) else v
+
+
+class _SafeWriter:
+    """csv.writer with every text cell passed through _cell."""
+
+    def __init__(self, f: Any) -> None:
+        self._w = csv.writer(f)
+
+    def writerow(self, row: Any) -> Any:
+        return self._w.writerow([_cell(c) for c in row])
+
+
 def day_rows(dal: Any, metas: list[dict], t0: int, t1: int, res: str) -> Iterator[list]:
     """The rows of [t0, t1) for these points, in time order."""
     if res == "raw":
@@ -200,7 +220,7 @@ def weather_rows(dal: Any, sensors: list[dict], start: int, end: int) -> Iterato
 
 def _write_weather(f: Any, dal: Any, start: int, end: int) -> int:
     sensors = outdoor_points(dal, start, end)
-    w = csv.writer(f)
+    w = _SafeWriter(f)
     w.writerow(weather_header(sensors))
     n = 0
     for line in weather_rows(dal, sensors, start, end):
@@ -242,7 +262,7 @@ def write_export(db_path: str, ids: list[int], start: int, end: int, res: str, l
                 for name, spans in groups:
                     with zf.open(name, "w") as raw:
                         with io.TextIOWrapper(raw, encoding="utf-8-sig", newline="") as f:
-                            w = csv.writer(f)
+                            w = _SafeWriter(f)
                             w.writerow(header(metas, res))
                             for t0, t1 in spans:
                                 for line in day_rows(dal, metas, t0, t1, res):
@@ -255,7 +275,7 @@ def write_export(db_path: str, ids: list[int], start: int, end: int, res: str, l
             filename = base + ".zip"
         else:
             with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
-                w = csv.writer(f)
+                w = _SafeWriter(f)
                 w.writerow(header(metas, res))
                 for t0, t1, _ in days:
                     for line in day_rows(dal, metas, t0, t1, res):

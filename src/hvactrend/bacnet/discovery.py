@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -461,7 +462,12 @@ def _present_value(v: Any) -> tuple[Optional[float], Optional[str]]:
     if isinstance(v, bool):
         return float(v), ("active" if v else "inactive")
     if isinstance(v, float):                       # Real
-        return float(v), None
+        f = float(v)
+        # IEEE 754: some controllers report a failed sensor as +/-Inf or NaN. Stored as a
+        # number, one Inf poisons the 5-minute and hourly maxima and averages (the hourly are
+        # kept for ever) and fails any JSON response that carries it (2026-11-06 review, M9).
+        # No number, and the text says what came: the collector marks it a fault.
+        return (f, None) if math.isfinite(f) else (None, repr(f))
     if isinstance(v, int):                          # Unsigned/Integer OR BinaryPV/Enumerated
         label = str(v)
         if label != str(int(v)):                    # symbolic enum label present

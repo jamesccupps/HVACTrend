@@ -88,7 +88,10 @@ class ClaudeProvider(LLMProvider):
                 raise RuntimeError(
                     "ANTHROPIC_API_KEY not set: enter the key on the Settings page.")
             import anthropic  # lazy: importing this module stays dependency-free
-            self._client = anthropic.AsyncAnthropic(api_key=self.api_key)
+            # max_retries=0: reports._generate_with_retry is the one retry layer. The SDK's
+            # own default (2) ran inside it, so one failure could be billed up to 9 times
+            # (2026-11-06 review, M11).
+            self._client = anthropic.AsyncAnthropic(api_key=self.api_key, max_retries=0)
         return self._client
 
     async def generate(self, prompt: str, *, system: Optional[str] = None,

@@ -207,7 +207,8 @@ async function load(live){
   $('#msg').className='msg';
   $('#live').disabled=true; $('#refresh').disabled=true;
   try{
-    const rep=await api('/api/coverage'+(live?'?live=true':''));
+    // the live check reads the plant, so it is a POST (a GET can be fired by an <img>)
+    const rep=live ? await api('/api/coverage?live=true',{method:'POST'}) : await api('/api/coverage');
     render(rep);
     if(live&&!rep.live_error){
       const aside=(rep.systems||[]).reduce((a,s)=>a+(s.ignored||[]).filter(p=>/read live/.test(p.why)).length,0);

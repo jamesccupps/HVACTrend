@@ -150,22 +150,22 @@ def test_due_at_startup_survives_a_low_machine_uptime(monkeypatch):
     c = _collector({"weather": {"refresh_interval_s": 3600},
                     "analysis": {"baseline": {"rebuild_interval_s": 86400}}})
     fired = []
-    monkeypatch.setattr("hvactrend.ai.weather.update_weather",
-                        lambda dal, cfg: fired.append("weather") or {"stored": 1})
+    monkeypatch.setattr("hvactrend.ai.weather.fetch_weather",
+                        lambda cfg: fired.append("weather") or {"stored": 1})
     monkeypatch.setattr("hvactrend.ai.roles.assign_roles",
                         lambda dal: fired.append("roles") or {"classified": 1, "total": 1})
     monkeypatch.setattr("hvactrend.ai.baseline.build_baselines",
                         lambda dal, cfg: {"points": 1, "corrs": 0, "window_days": 30})
     # a freshly-booted machine: monotonic() is small, smaller than BOTH intervals
     monkeypatch.setattr("time.monotonic", lambda: 12.0)
-    c._maybe_refresh_weather()
+    asyncio.run(c._maybe_refresh_weather())
     c._maybe_rebuild_model()
     assert fired == ["weather", "roles"], "both must run on a just-booted machine"
 
     # and having run, they must respect their interval from that point
     fired.clear()
     monkeypatch.setattr("time.monotonic", lambda: 100.0)
-    c._maybe_refresh_weather()
+    asyncio.run(c._maybe_refresh_weather())
     c._maybe_rebuild_model()
     assert fired == []
 
@@ -176,19 +176,19 @@ def test_weather_and_model_refresh_are_DUE_at_startup(monkeypatch):
     c = _collector({"weather": {"refresh_interval_s": 3600},
                     "analysis": {"baseline": {"rebuild_interval_s": 86400}}})
     fired = []
-    monkeypatch.setattr("hvactrend.ai.weather.update_weather",
-                        lambda dal, cfg: fired.append("weather") or {"stored": 1})
+    monkeypatch.setattr("hvactrend.ai.weather.fetch_weather",
+                        lambda cfg: fired.append("weather") or {"stored": 1})
     monkeypatch.setattr("hvactrend.ai.roles.assign_roles",
                         lambda dal: fired.append("roles") or {"classified": 1, "total": 1})
     monkeypatch.setattr("hvactrend.ai.baseline.build_baselines",
                         lambda dal, cfg: {"points": 1, "corrs": 0, "window_days": 30})
-    c._maybe_refresh_weather()
+    asyncio.run(c._maybe_refresh_weather())
     c._maybe_rebuild_model()
     assert fired == ["weather", "roles"]
 
     # ...and NOT again on the very next loop iteration
     fired.clear()
-    c._maybe_refresh_weather()
+    asyncio.run(c._maybe_refresh_weather())
     c._maybe_rebuild_model()
     assert fired == []
 
@@ -196,11 +196,11 @@ def test_weather_and_model_refresh_are_DUE_at_startup(monkeypatch):
 def test_refresh_can_be_switched_off(monkeypatch):
     c = _collector({"weather": {"refresh_interval_s": 0},
                     "analysis": {"baseline": {"rebuild_interval_s": None}}})
-    monkeypatch.setattr("hvactrend.ai.weather.update_weather",
-                        lambda dal, cfg: pytest.fail("weather ran while disabled"))
+    monkeypatch.setattr("hvactrend.ai.weather.fetch_weather",
+                        lambda cfg: pytest.fail("weather ran while disabled"))
     monkeypatch.setattr("hvactrend.ai.roles.assign_roles",
                         lambda dal: pytest.fail("model rebuild ran while disabled"))
-    c._maybe_refresh_weather()
+    asyncio.run(c._maybe_refresh_weather())
     c._maybe_rebuild_model()
 
 
@@ -224,22 +224,22 @@ def test_a_failed_weather_fetch_backs_off_instead_of_hammering(monkeypatch):
     """The interval is stamped BEFORE the call, so a provider outage retries next
     interval rather than on every single poll cycle."""
     n = []
-    monkeypatch.setattr("hvactrend.ai.weather.update_weather",
-                        lambda dal, cfg: n.append(1) or {"error": "boom", "stored": 0})
+    monkeypatch.setattr("hvactrend.ai.weather.fetch_weather",
+                        lambda cfg: n.append(1) or {"error": "boom", "stored": 0})
     c = _collector({"weather": {"refresh_interval_s": 3600}})
-    c._maybe_refresh_weather()
-    c._maybe_refresh_weather()
-    c._maybe_refresh_weather()
+    asyncio.run(c._maybe_refresh_weather())
+    asyncio.run(c._maybe_refresh_weather())
+    asyncio.run(c._maybe_refresh_weather())
     assert len(n) == 1        # failed once, backed off — did not hammer the endpoint
 
 
 def test_collector_loop_survives_a_weather_or_model_explosion(monkeypatch):
     """Upkeep must never take down a 24/7 collector."""
-    monkeypatch.setattr("hvactrend.ai.weather.update_weather",
-                        lambda dal, cfg: (_ for _ in ()).throw(RuntimeError("network down")))
+    monkeypatch.setattr("hvactrend.ai.weather.fetch_weather",
+                        lambda cfg: (_ for _ in ()).throw(RuntimeError("network down")))
     c = _collector({"weather": {"refresh_interval_s": 3600}})
     with pytest.raises(RuntimeError):
-        c._maybe_refresh_weather()          # raises...
+        asyncio.run(c._maybe_refresh_weather())          # raises...
     # ...and run() wraps it — verified by the guard in run(); assert the guard exists
     import inspect
     src = inspect.getsource(Collector.run)

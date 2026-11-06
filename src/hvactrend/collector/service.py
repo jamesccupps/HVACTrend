@@ -193,7 +193,7 @@ class Collector:
                 except Exception:  # alerting must never take down the collector
                     logger.exception("alert check failed")
                 try:
-                    self._maybe_refresh_weather()
+                    await self._maybe_refresh_weather()
                 except Exception:  # a weather outage must never stop collection
                     logger.exception("weather refresh failed")
                 try:
@@ -427,7 +427,12 @@ class Collector:
                 params += [f"{p['object_type']},{p['object_instance']}", ["priority-array"]]
             if time.monotonic() - t0 > self._device_budget_s:
                 break                                    # the rest wait for the next read
-            rows = await self._app.read_property_multiple(address, params)
+            try:
+                rows = await self._app.read_property_multiple(address, params)
+            except Exception:  # noqa: BLE001 -- a reply that will not decode: one at a time.
+                # It used to escape the whole pass after _next_priority had moved on, and
+                # every controller's readings from that pass were lost (2026-11-06 review, M8).
+                rows = None
             got: dict[str, Any] = {}
             if rows is None or _is_error(rows):          # no RPM: one at a time, as the poll
                 for p in chunk:
@@ -513,9 +518,10 @@ class Collector:
         report. Errors are RECORDED as a stub by generate_report rather than swallowed, so a
         failing provider is visible in the UI and the check-in instead of looking like a
         quiet plant."""
-        from ..ai.reports import generate_report      # lazy: keeps the collector import light
+        from ..ai.reports import REPORT_LOCK, generate_report   # lazy: a light import
         t0 = time.monotonic()
-        result = await generate_report(self._dal, self._config, kind)
+        async with REPORT_LOCK:                 # never alongside one started by hand
+            result = await generate_report(self._dal, self._config, kind)
         logger.info("%s report stored (id=%s, status=%s) in %.1fs",
                     kind, result.get("report_id"), result.get("status"),
                     time.monotonic() - t0)
@@ -587,24 +593,26 @@ class Collector:
             logger.info("alert check: %d raised, %d resolved, %d open",
                         res.get("raised", 0), res.get("resolved", 0), res.get("open", 0))
 
-    def _maybe_refresh_weather(self) -> None:
+    async def _maybe_refresh_weather(self) -> None:
         """Pull current outdoor conditions on an interval (default hourly, matching the
         hour-floored weather rows). The economizer checks and the report weather line
         read the `weather` table, so a stale table degrades the analysis SILENTLY rather
         than failing loudly — a daily report simply runs with no weather at all.
 
-        Blocking: one HTTP GET (15 s worst case) on the loop thread. It cannot be moved
-        to a threadpool — the DAL's sqlite connection is single-thread-bound
-        (check_same_thread defaults True). A rare stall shifts the next poll, never
-        skips one. No-op when weather.refresh_interval_s is 0/null."""
+        The HTTP GET runs in a worker thread; only the store (a few rows) runs here, on
+        the loop the DAL's connection is bound to. It used to be the whole thing on the
+        loop: on a BAS network without internet, DNS plus the connect timeout froze polling,
+        live reads and every page for 15-25 s an hour (2026-11-06 review, M4). No-op when
+        weather.refresh_interval_s is 0/null."""
         if self._weather_interval_s <= 0:
             return
         if (self._last_weather is not None
                 and time.monotonic() - self._last_weather < self._weather_interval_s):
             return
         self._last_weather = time.monotonic()   # stamp BEFORE, so a failure backs off
-        from ..ai.weather import update_weather      # lazy: keeps the import light
-        res = update_weather(self._dal, self._config)
+        from ..ai import weather                      # lazy: keeps the import light
+        fetched = await asyncio.to_thread(weather.fetch_weather, self._config)
+        res = weather.store_weather(self._dal, fetched)
         if res.get("error"):
             logger.warning("weather refresh failed (will retry): %s", res["error"])
         elif res.get("stored"):
@@ -933,6 +941,8 @@ def _sample_from(p: dict, props: dict, ts: int) -> Sample:
         rel_s = None if rel is None or _is_error(rel) else str(rel)
         if _truthy(oos) or (rel_s is not None and rel_s != "no-fault-detected"):
             quality = Quality.FAULT          # out-of-service or unreliable sensor
+        elif num is None and text in ("inf", "-inf", "nan"):
+            quality = Quality.FAULT          # a Real the sensor could not give (M9)
         else:
             quality = Quality.GOOD
 

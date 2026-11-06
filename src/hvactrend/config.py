@@ -190,7 +190,11 @@ SETTABLE_DOMAINS = frozenset({
 #   storage.maintenance_interval_s -> 0 stops rollups and retention together
 # None of these is a thing to nudge from a web form; all of them are a deliberate act with
 # a file to review. `storage.backup.` subsumes the old `storage.backup.dir` entry.
+# The access keys too (2026-11-06 review, M13): api.remote_viewer_only=false from the form
+# opened every page to the whole network at the next restart, with no login, and
+# local_hosts / allowed_hosts widen who counts as this computer or which names it answers.
 _DENY_KEYS = ("bacnet.", "api.auth.", "api.host", "api.port", "ai.providers.claude.api_key",
+              "api.remote_viewer_only", "api.local_hosts", "api.allowed_hosts",
               "storage.retention.", "storage.path", "storage.backup.",
               "storage.rollups.", "storage.maintenance_interval_s")
 

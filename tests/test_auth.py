@@ -75,10 +75,11 @@ MUTATORS = [
 # talk to the BAS -- and device_objects on a 2000-object panel is a ~4 minute operation.
 # /api/discover was gated from the start; these three were not.
 PLANT_TRAFFIC = [
-    ("get", "/api/points/1/read", None),
+    ("post", "/api/points/1/read", None),
     ("post", "/api/points/read", {"ids": [1]}),
-    ("get", "/api/devices/100100/objects", None),
+    ("post", "/api/devices/100100/objects", None),
     ("post", "/api/discover", None),
+    ("post", "/api/coverage?live=true", None),
 ]
 
 

@@ -217,8 +217,10 @@ _ICON = {"critical": "\U0001f534", "high": "\U0001f7e0"}          # red / orange
 _OPEN = {"collector-stale": "Data has stopped",
          "device-stale": "{dev} is not responding",
          "device-poll-failed": "{dev}: poll cycles failing",
-         "device-points-missing": "{dev}: some points not answering"}
-_CLEAR = {"collector-stale": "Data is flowing again",
+         "device-points-missing": "{dev}: some points not answering",
+         "clock-ahead": "Readings stamped in the future"}
+_CLEAR = {"clock-ahead": "Reading times are back in step with the clock",
+          "collector-stale": "Data is flowing again",
           "device-stale": "{dev} is responding again",
           "device-poll-failed": "{dev} is polling normally again",
           "device-points-missing": "{dev}: every point answering again"}

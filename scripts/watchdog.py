@@ -85,8 +85,17 @@ def check(dal, config, now_utc: int) -> dict:
             raised += 1
 
     # 1) is data flowing at all? (the headline check — covers dead/hung/asleep collector)
-    ext = dal.samples_time_extent()
-    newest = ext.get("max_ts")
+    # Only samples up to now count: after a VM restore or an NTP jump, readings stamped in the
+    # future made the age negative and switched this check off until real time caught up
+    # (2026-11-06 review, M14). Those are an alert of their own.
+    newest = dal.newest_sample_ts(until=now_utc + 300)
+    ahead = dal.newest_sample_ts()
+    if ahead is not None and ahead > now_utc + 300:
+        raise_alert("clock-ahead", "high",
+                    f"Readings are stamped up to {(ahead - now_utc) // 60} min AHEAD of this "
+                    f"computer's clock (newest {time.strftime('%Y-%m-%d %H:%M', time.localtime(ahead))})."
+                    " Was the clock changed, or a virtual machine restored? The data-stopped "
+                    "check ignores them.")
     if newest is None:
         raise_alert("collector-stale", "critical",
                     "No samples have EVER been recorded — the collector has not run.")
@@ -167,30 +176,92 @@ def _points_missing(dal, d: dict, label: str, now_utc: int, miss_min: int,
             + (f": {shown}." if shown else "."))
 
 
+_FAILING_MARK = _REPO / "data" / ".watchdog-failing"
+
+
+def _last_resort(what: str, config=None) -> None:
+    """The watchdog cannot do its job (no config, no database, its checks crashed): say so
+    on the phone with nothing but the topic from secrets.env. Without this, one bad indent in
+    config.yaml stopped every alarm and the morning check-in, and the only sign was something
+    NOT arriving (2026-11-06 review, H3). At most once an hour; never raises."""
+    try:
+        if _FAILING_MARK.exists() and time.time() - _FAILING_MARK.stat().st_mtime < 3600:
+            return
+        tgt = notify.target(config)        # config None: the topic and the default server
+        if not tgt:
+            return
+        ok, _detail = notify.post(tgt, notify.Message(
+            "HVACTrend watchdog cannot run", 5,
+            [what[:400], "Until this is fixed, no data-stopped or equipment alarm reaches "
+                         "this phone, and there is no morning check-in."]))
+        if ok:
+            _FAILING_MARK.parent.mkdir(parents=True, exist_ok=True)
+            _FAILING_MARK.touch()
+    except Exception:  # noqa: BLE001 -- the last resort must not raise
+        pass
+
+
+def _recovered(config) -> None:
+    """A run got through after _last_resort spoke: say it is back."""
+    try:
+        if not _FAILING_MARK.exists():
+            return
+        _FAILING_MARK.unlink()
+        tgt = notify.target(config)
+        if tgt:
+            notify.post(tgt, notify.Message("HVACTrend watchdog is running again", 3,
+                                            ["Alarms and the check-in are back to normal."]))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="External collector watchdog.")
     p.add_argument("--config", default="config/config.yaml")
     p.add_argument("--quiet", action="store_true", help="print only when unhealthy")
     args = p.parse_args()
 
-    secrets_store.load_into_env()     # the ntfy topic lives in config/secrets.env
+    try:
+        secrets_store.load_into_env()     # the ntfy topic lives in config/secrets.env
+    except Exception as exc:  # noqa: BLE001 -- nothing to push with; still say it here
+        print(f"cannot read the secrets file: {type(exc).__name__}", file=sys.stderr)
     try:
         cfg = load_config(args.config)
-    except (ConfigError, FileNotFoundError) as exc:
+    except Exception as exc:  # noqa: BLE001 -- ConfigError, a missing file, a YAML syntax error
         print(f"config error: {exc}", file=sys.stderr)
+        _last_resort(f"{args.config} cannot be read: {type(exc).__name__}: {exc}")
         return 2
     try:
         dal = SQLiteDAL(cfg.storage.path, cfg.get("storage").get("schema_file"))
+        # Wait out a writer (the server, a backup) rather than failing in Python's 5 s.
+        dal._conn.execute("PRAGMA busy_timeout = 30000")
     except Exception as exc:  # noqa: BLE001 — DB unreachable is itself the failure mode
         print(f"cannot open database: {exc}", file=sys.stderr)
+        _last_resort(f"the database cannot be opened: {type(exc).__name__}: {exc}", cfg)
         return 2
 
     try:
         now = int(time.time())
-        res = check(dal, cfg, now)
-        # The rule-based alarms, fenced like delivery below: a rules failure
-        # must never change the liveness check, its alerts or the exit code. Imported HERE,
-        # not at the top, so even a module that fails to import cannot stop the watchdog.
+        try:
+            res = check(dal, cfg, now)
+        except Exception as exc:  # noqa: BLE001 -- locked, full disk, corrupt
+            print(f"watchdog: the checks failed: {exc}", file=sys.stderr)
+            _last_resort(f"the watchdog's checks failed: {type(exc).__name__}: {exc}", cfg)
+            return 2
+        _recovered(cfg)
+        # Delivery of the watchdog's OWN alerts (data stopped, a controller dark) and the
+        # check-in comes BEFORE the rules pass: after downtime that pass replays days of data
+        # and could delay, or outlast, the one message that matters most (2026-11-06 review).
+        # Fenced off from detection: a failure to send must never change what was detected,
+        # the alert rows written, or the exit code.
+        try:
+            sent = notify.run(dal, cfg, now)
+        except Exception as exc:  # noqa: BLE001
+            # The exception TYPE only -- its text could carry the webhook URL.
+            sent = {"errors": [f"delivery raised {type(exc).__name__}"]}
+        # The rule-based alarms, fenced the same way: a rules failure must never change the
+        # liveness check, its alerts or the exit code. Imported HERE, not at the top, so even
+        # a module that fails to import cannot stop the watchdog.
         rules_out: dict = {}
         try:
             from hvactrend.rules import live as rules_live
@@ -201,13 +272,6 @@ def main() -> int:
                 dal.set_meta("rules.last_error", f"{now} {rules_out['error']}"[:500])
             except Exception:  # noqa: BLE001 -- the report of the failure must not fail
                 pass
-        # Delivery comes AFTER detection and is fenced off from it: a failure to send must
-        # never change what was detected, the alert rows written, or the exit code.
-        try:
-            sent = notify.run(dal, cfg, now)
-        except Exception as exc:  # noqa: BLE001
-            # The exception TYPE only -- its text could carry the webhook URL.
-            sent = {"errors": [f"delivery raised {type(exc).__name__}"]}
         # A push step that raises is recorded (its type only) for the check-in to report:
         # otherwise the equipment alarms could stop reaching the phone with no sign at all.
         try:

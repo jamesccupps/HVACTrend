@@ -238,6 +238,24 @@ def _assert_bindable(local_address: str) -> None:
             f"this machine — check the NIC / DHCP lease and update bacnet.local_address "
             f"in config.yaml.{hint}"
         ) from exc
+    # ...and the PORT. The address check above binds port 0, and bacpypes3 retries a refused
+    # bind every second for ever without raising: with 47808 held by another BACnet tool
+    # (YABE, a vendor workstation, a scanner) the collector "ran", /health said so, and every
+    # read timed out (2026-11-06 review, M5).
+    m = re.search(r":(\d+)$", local_address.strip())
+    port = int(m.group(1)) if m else 47808
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.bind((ip, port))
+        finally:
+            s.close()
+    except OSError as exc:
+        raise BACnetConfigError(
+            f"UDP port {port} on {ip} is in use ({exc}). Is another BACnet program running "
+            f"on this computer (a workstation tool, a scanner), or a second copy of this one? "
+            f"Close it, or give this program another port in bacnet.local_address."
+        ) from exc
 
 
 def _refuse_placeholders(local_address: Any, device_instance: Any) -> None:

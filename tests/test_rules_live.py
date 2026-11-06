@@ -717,7 +717,10 @@ def test_a_device_check_that_fails_does_not_send_all_clears(tmp_path, monkeypatc
     def boom():
         raise sqlite3.OperationalError("database is locked")
     monkeypatch.setattr(dal, "poll_health_latest", boom)
-    wd.check(dal, _Cfg(), T0 + 300)
+    # At the clock the data was fed at. This ran at T0 (2023) against readings stamped now,
+    # and passed only because readings "from the future" switched the data-stopped check off
+    # -- the 2026-11-06 review's M14, which the watchdog now reports instead.
+    wd.check(dal, _Cfg(), int(time.time()) + 60)
     assert [a["fingerprint"] for a in dal.open_alerts()] == ["device-stale:101000"]
 
 

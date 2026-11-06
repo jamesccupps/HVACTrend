@@ -29,6 +29,13 @@ from .provider import LLMProvider, get_provider
 
 log = logging.getLogger("hvactrend.ai.reports")
 
+# One report at a time, scheduled or by hand: two tabs pressing "generate", or a press during
+# the morning run, were two billed calls (2026-11-06 review, M11).
+REPORT_LOCK = asyncio.Lock()
+# A real daily prompt is 12-15k characters. Far past that is a window or a database gone
+# wrong, and a bill to match; refused before the call, never sent.
+PROMPT_MAX = 200_000
+
 
 async def generate_report(dal: Any, config: Any, kind: str, *,
                           now_utc: Optional[int] = None,
@@ -40,6 +47,9 @@ async def generate_report(dal: Any, config: Any, kind: str, *,
     inputs = await _inputs(dal, config, kind, win_start, win_end)
     items = inputs["items"]
     prompt = summary.load_template(config, kind).replace("{context}", summary.render(inputs))
+    if len(prompt) > PROMPT_MAX:
+        raise ValueError(f"the {kind} prompt is {len(prompt):,} characters (the limit is "
+                         f"{PROMPT_MAX:,}); not sent")
     system = summary.SYSTEM.format(kind="weekly" if kind == "weekly" else "daily",
                                    site=summary.site_label(config))
     prov = provider or get_provider(config, kind)

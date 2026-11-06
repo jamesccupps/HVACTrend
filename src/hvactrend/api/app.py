@@ -187,7 +187,8 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             await close_application()
             dal.close()
 
-    app = FastAPI(title="HVACTrend", version="0.0.0", lifespan=lifespan)
+    from .. import __version__
+    app = FastAPI(title="HVACTrend", version=__version__, lifespan=lifespan)
 
     def _bacnet():
         b = app.state.bacnet
@@ -290,6 +291,94 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             # 403 invites someone to go looking for a token that does not exist.
             return JSONResponse({"detail": "not found"}, status_code=404)
         return await call_next(request)
+
+    # ── the outer gate: which names, which sites, how much (2026-11-06 review) ──
+    # Registered AFTER _remote_viewer_only, so it runs FIRST (Starlette: last added =
+    # outermost). The viewer-only gate above trusts where a request comes FROM; on its own
+    # that let any web page opened on this computer act as its operator by DNS rebinding:
+    # its own name re-pointed at 127.0.0.1 makes its requests local AND same-origin, and
+    # it could change or delete the phone-alert topic or download the database (H1).
+    _BODY_MAX = 512 * 1024      # the largest real body is a saved view or a long sequence text
+    _HOSTS: dict = {"names": frozenset(), "at": -1e9}
+
+    def _allowed_hosts() -> frozenset:
+        """The names this server answers to: loopback, this computer's names and addresses,
+        and api.allowed_hosts (a DNS alias the techs use). `testserver` is the test
+        client's; no public DNS name can be it."""
+        import socket
+        names = {"localhost", "127.0.0.1", "::1", "testserver", *_local_hosts()}
+        try:
+            names.update({socket.gethostname(), socket.getfqdn()})
+        except OSError:
+            pass
+        extra = _cfg("api", "allowed_hosts", default=None) or []
+        if isinstance(extra, (list, tuple)):
+            names.update(str(h) for h in extra)
+        return frozenset(str(n).strip().lower().rstrip(".") for n in names if n)
+
+    def _host_ok(host_header: str) -> bool:
+        h = (host_header or "").strip().lower()
+        if h.startswith("["):                              # [::1]:8000
+            name = h[1:h.find("]")] if "]" in h else h
+        else:
+            name = h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+        name = name.rstrip(".")
+        if name in _HOSTS["names"]:
+            return True
+        # First request, or this computer's addresses changed (DHCP): look again, at most
+        # once a minute, so a stream of foreign names cannot make every request resolve.
+        now = time.monotonic()
+        if now - _HOSTS["at"] > 60:
+            _HOSTS.update(names=_allowed_hosts(), at=now)
+            return name in _HOSTS["names"]
+        return False
+
+    def _cross_site(request) -> Optional[str]:
+        """Why a request that changes something must be refused, or None. A page on another
+        site can POST here with no preflight (a form, a no-cors fetch) and, with login off,
+        start billed AI reports, building-wide sweeps or backup rotations (M1). Browsers say
+        where a request comes from; curl and scripts on this computer send neither header."""
+        site = (request.headers.get("sec-fetch-site") or "").lower()
+        if site and site not in ("same-origin", "none"):
+            return f"a {site} request"
+        origin = request.headers.get("origin")
+        if origin is not None:
+            from urllib.parse import urlsplit
+            if origin == "null" or urlsplit(origin).netloc.lower() != \
+                    (request.headers.get("host") or "").lower():
+                return "a request from another origin"
+        return None
+
+    @app.middleware("http")
+    async def _gate(request, call_next):
+        from fastapi.responses import JSONResponse
+        if not _host_ok(request.headers.get("host", "")):
+            return JSONResponse({"detail": "unknown host name; add it to api.allowed_hosts "
+                                           "in config.yaml if it is this server's"},
+                                status_code=421)
+        method = request.method.upper()
+        if method not in ("GET", "HEAD", "OPTIONS"):
+            why = _cross_site(request)
+            if why:
+                return JSONResponse({"detail": f"refused {why}"}, status_code=403)
+            # Read and parsed whole, on the loop, before any route can cap it (M10).
+            length = request.headers.get("content-length")
+            try:
+                too_big = length is not None and int(length) > _BODY_MAX
+            except ValueError:
+                too_big = True
+            if too_big:
+                return JSONResponse({"detail": "request body too large"}, status_code=413)
+            if length is None and "chunked" in (request.headers.get("transfer-encoding") or ""):
+                return JSONResponse({"detail": "send a Content-Length"}, status_code=411)
+        response = await call_next(request)
+        # No other site may frame these pages (clickjacking the Settings page), sniff a type,
+        # or learn the page a link was followed from.
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
 
     # ── page ─────────────────────────────────────────────────────────────────
     @app.get("/", response_class=HTMLResponse)
@@ -630,8 +719,10 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         """Fetch + store the latest weather now (Tempest cloud if configured, else
         Open-Meteo). Runs in the server process, which holds TEMPEST_TOKEN in env."""
         _require_auth(authorization, x_auth_token)
-        from ..ai.weather import update_weather
-        return update_weather(app.state.dal, app.state.config)
+        from ..ai import weather
+        # the GET off the loop, the store on it (the collector does the same, M4)
+        fetched = await asyncio.to_thread(weather.fetch_weather, app.state.config)
+        return weather.store_weather(app.state.dal, fetched)
 
     # ── inventory browser (from the cached DB, no BACnet needed) ──────────────
     @app.get("/api/systems")
@@ -967,7 +1058,9 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     # would have been the only unauthenticated way to put load on the BAS network --
     # device_objects on a 2000-object panel is a ~4 minute operation. The browser already
     # sends the token on every request (index.html j()), so gating costs the UI nothing.
-    @app.get("/api/points/{point_id}/read")
+    # POST, not GET, since 2026-11-06: a GET that reads the plant can be fired by an <img>
+    # on any web page opened on this computer (review M1).
+    @app.post("/api/points/{point_id}/read")
     async def read_one(point_id: int, authorization: str = Header(default=""),
                        x_auth_token: str = Header(default="")) -> dict[str, Any]:
         _require_auth(authorization, x_auth_token)   # live read on the plant network
@@ -982,12 +1075,21 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
                         authorization: str = Header(default=""),
                         x_auth_token: str = Header(default="")) -> dict[str, Any]:
         _require_auth(authorization, x_auth_token)   # live read on the plant network
+        if len(ids) > 2000:
+            raise HTTPException(status_code=413, detail="at most 2000 points per read")
         targets = app.state.dal.points_read_targets(ids)
         results = await _read_points_live(_bacnet(), targets)
         return {"results": [results.get(i, {"id": i, "error": "no-response"}) for i in ids]}
 
     # ── point coverage review (coverage.py, ROADMAP Phase 0.5) ───────────────
     @app.get("/api/coverage")
+    async def coverage_view(authorization: str = Header(default=""),
+                            x_auth_token: str = Header(default="")) -> dict[str, Any]:
+        """The review from the database only. The live check is POST: a GET that reads the
+        plant can be fired by an <img> on any web page opened on this computer (M1)."""
+        return await coverage_review(False, authorization, x_auth_token)
+
+    @app.post("/api/coverage")
     async def coverage_review(live: bool = False, authorization: str = Header(default=""),
                               x_auth_token: str = Header(default="")) -> dict[str, Any]:
         """Which points each monitoring rule needs, unit by unit, and what is logged.
@@ -1042,19 +1144,22 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         commissioning ONE new panel: `?low=100300&high=100300`), and `objects=false` to
         locate a device without reading its object list at all."""
         _require_auth(authorization, x_auth_token)   # network sweep + inventory writes
-        cfg = app.state.config
-        site = cfg.get("site")
-        site_id = app.state.dal.ensure_site(
-            site.get("code", "SITE"), site.get("name", "Site"),
-            site.get("timezone", "America/New_York"))
-        results = await run_discovery(_bacnet(), app.state.dal if cache else None,
-                                      site_id=site_id, address=directed,
-                                      low_limit=low, high_limit=high,
-                                      enumerate_objects=objects,
-                                      timeout=timeout, cache=cache)
+        bacnet = _bacnet()
+        async with _one_sweep("a discovery"):
+            cfg = app.state.config
+            site = cfg.get("site")
+            site_id = app.state.dal.ensure_site(
+                site.get("code", "SITE"), site.get("name", "Site"),
+                site.get("timezone", "America/New_York"))
+            results = await run_discovery(bacnet, app.state.dal if cache else None,
+                                          site_id=site_id, address=directed,
+                                          low_limit=low, high_limit=high,
+                                          enumerate_objects=objects,
+                                          timeout=timeout, cache=cache)
         return {"devices": [_device_json(r) for r in results]}
 
-    @app.get("/api/devices/{device_instance}/objects")
+    # POST since 2026-11-06 (it was a GET an <img> could fire: M1).
+    @app.post("/api/devices/{device_instance}/objects")
     async def device_objects(device_instance: int, authorization: str = Header(default=""),
                              x_auth_token: str = Header(default="")) -> dict[str, Any]:
         _require_auth(authorization, x_auth_token)   # full object enumeration: minutes of traffic
@@ -1063,9 +1168,24 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             raise HTTPException(status_code=404, detail="device not discovered yet")
         dd = DiscoveredDevice(device_instance=device_instance, address=row["address"],
                               network_number=row.get("network_number"))
-        objects = await enumerate_device(_bacnet(), dd)
+        bacnet = _bacnet()
+        async with _one_sweep("a device read"):
+            objects = await enumerate_device(bacnet, dd)
         return {"device_instance": device_instance,
                 "objects": [_object_json(o) for o in objects]}
+
+    # One sweep of the plant network at a time -- a discovery, a full device read, a rescan.
+    # Each is minutes of reads at worst; two at once only double the load on the controllers.
+    _SWEEP = asyncio.Lock()
+
+    @asynccontextmanager
+    async def _one_sweep(what: str):
+        st = getattr(app.state, "rescan", None) or {}
+        if _SWEEP.locked() or st.get("state") == "running":
+            raise HTTPException(status_code=409, detail=f"refused {what}: another sweep of "
+                                                        "the controllers is running")
+        async with _SWEEP:
+            yield
 
     # ── rescan one controller (Point Selection's button; rescan.py) ───────────
     # The object list is read on the shared stack while the collector keeps polling, so
@@ -1100,6 +1220,8 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         if st.get("state") == "running":
             raise HTTPException(status_code=409,
                                 detail=f"controller {st.get('device')} is being rescanned")
+        if _SWEEP.locked():
+            raise HTTPException(status_code=409, detail="a discovery or device read is running")
         from .. import rescan as _rescan
 
         def progress(done: int, total: int) -> None:
@@ -1311,14 +1433,32 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         (in a worker thread), calls Claude, stores it.
         Body: {kind:'daily'|'weekly'|'manual', start?:int, end?:int}."""
         _require_auth(authorization, x_auth_token)   # billed LLM call + DB writes
-        from ..ai.reports import generate_report
+        from ..ai.reports import REPORT_LOCK, generate_report
         kind = payload.get("kind", "daily")
         if kind not in ("daily", "weekly", "manual"):
             raise HTTPException(status_code=400, detail="kind must be daily|weekly|manual")
-        result = await generate_report(
-            app.state.dal, app.state.config, kind,
-            start=payload.get("start"), end=payload.get("end"))
-        return result
+        # Limits on a billed call (2026-11-06 review, M11): it ignored ai.enabled, took any
+        # window (a one-sided {"start": 0} loaded every raw sample of every rule point), and
+        # two presses were two calls.
+        if not bool(_cfg("ai", "enabled", default=False)):
+            raise HTTPException(status_code=409,
+                                detail="the AI summary is switched off (ai.enabled)")
+        start, end = payload.get("start"), payload.get("end")
+        if (start is None) != (end is None):
+            raise HTTPException(status_code=400, detail="give both start and end, or neither")
+        if start is not None:
+            if not all(isinstance(x, int) and not isinstance(x, bool) for x in (start, end)):
+                raise HTTPException(status_code=400, detail="start and end are epoch seconds")
+            if not 0 < end - start <= 7 * 86400:
+                raise HTTPException(status_code=400, detail="the window is at most 7 days")
+        if REPORT_LOCK.locked():
+            raise HTTPException(status_code=409, detail="a report is being written now")
+        async with REPORT_LOCK:
+            try:
+                return await generate_report(app.state.dal, app.state.config, kind,
+                                             start=start, end=end)
+            except ValueError as exc:          # the prompt-size refusal
+                raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     @app.get("/api/reports")
     async def reports_list(limit: int = 50) -> dict[str, Any]:
@@ -1738,11 +1878,20 @@ async def _read_points_live(bacnet: Any, targets: list[dict], *,
                 oid_target[oid] = t
                 params.append(oid)
                 params.append(list(_LIVE_PROPS))
-            rows = await bacnet.read_property_multiple(address, params)
+            # A reply that will not decode raises, and one that is not an RPM-ACK comes back
+            # as None: both used to end the whole read (None as a TypeError on the loop below).
+            # One at a time instead, as the collector's poll does (2026-11-06 review, M8).
+            try:
+                rows = await bacnet.read_property_multiple(address, params)
+            except Exception:  # noqa: BLE001
+                rows = None
 
-            if _is_error(rows):
+            if rows is None or _is_error(rows):
                 for oid, t in oid_target.items():
-                    pv = await bacnet.read_property(address, oid, "present-value")
+                    try:
+                        pv = await bacnet.read_property(address, oid, "present-value")
+                    except Exception:  # noqa: BLE001 -- this point unread, the rest go on
+                        pv = None
                     results[t["id"]] = _live_result(t, {"present-value": pv},
                                                     _is_error, _present_value)
             else:

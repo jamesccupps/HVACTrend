@@ -863,7 +863,7 @@ async function j(url, opts){
   opts=opts||{};
   const headers=Object.assign({},opts.headers||{},authHeaders());
   const r = await fetch(url, Object.assign({},opts,{headers}));
-  if(r.status===401||r.status===503) authBar(true);
+  if(r.status===401) authBar(true);   // a 503 is BACnet offline or a server setting, not a token
   if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
   return r.json();
 }
@@ -3597,7 +3597,10 @@ function exportCSV(){
     const bac=`${m.system_code||''} ${m.name||''}`.trim();
     return m.display_name ? `${m.display_name} [${bac}]` : bac;
   };
-  const qq = v => `"${(''+v).replace(/"/g,'""')}"`;
+  // Quoted text is still a formula to a spreadsheet: a point renamed "=HYPERLINK(...)" on
+  // the BAS ran when the export was opened in Excel. A leading apostrophe keeps it text
+  // (2026-11-06 review). Numbers never pass through here.
+  const qq = v => { const s = ''+v; return `"${(/^[=+\-@\t\r]/.test(s) ? "'"+s : s).replace(/"/g,'""')}"`; };
   // ⚠️ WHAT RESOLUTION IS THIS? Past about two days the viewer serves 5-minute or hourly
   // ROLLUPS, and this export wrote each bucket's AVERAGE into a column headed with the point
   // name and left the quality column blank -- 1,738 rows of means presented as readings,

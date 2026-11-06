@@ -161,6 +161,9 @@ api:
   remote_viewer_only: true             # other computers get the trend viewer and nothing else:
                                        # no settings, no secrets, no backups, no point selection
   local_hosts: []                      # extra addresses to treat as "this computer"
+  allowed_hosts: []                    # extra NAMES the pages answer to, e.g. a DNS alias the
+                                       # techs type. This computer's own names and addresses
+                                       # always work; any other name gets "unknown host".
   auth:
     enabled: false                     # true = changes need the UI token (Settings page)
 

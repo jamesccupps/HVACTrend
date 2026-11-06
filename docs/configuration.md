@@ -108,6 +108,7 @@ Points to ignore, rules that are not possible here, overrides held on purpose: s
 | `port` | `8000` | |
 | `remote_viewer_only` | `true` | Other computers get the trend viewer only: no settings, secrets, backups or point selection |
 | `local_hosts` | `[]` | Extra addresses to treat as this computer |
+| `allowed_hosts` | `[]` | Extra names the pages answer to (a DNS alias people type). This computer's own names and addresses always work. Not settable from the Settings page |
 | `auth.enabled` | `false` | Require the UI token (Settings page) for any change |
 
 ## ai
