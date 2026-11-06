@@ -27,6 +27,7 @@ python -m venv .venv
 .venv/bin/pip install -e ".[dev,ai]"     # Windows: .venv\Scripts\pip ...
 .venv/bin/python -m pytest -q            # no hardware, no network
 node --test tests/js/viewer.test.mjs     # the trend viewer's logic (Node 18+)
+node --test tests/js/realtime.test.mjs   # the Realtime page's charts
 .venv/bin/python scripts/demo.py         # a made-up building on http://localhost:8001
 ```
 

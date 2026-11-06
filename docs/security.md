@@ -53,10 +53,14 @@ routers handle.
 - **Shared:** with `api.host: "0.0.0.0"`, other computers on the network can open
   `http://<this computer>:8000`.
 - **What others get:** with `api.remote_viewer_only: true` (the default), they get only the
-  **trend viewer**, read-only, and the data it needs. Everything else answers 404 to them:
+  **trend viewer**, read-only, the **Realtime page**, and the data those need. Everything
+  else answers 404 to them:
   - Point Selection, Settings, the dashboard and reports;
   - secrets and backups;
-  - any change.
+  - any change to the setup.
+- **Realtime trends** can be started and stopped from those computers. Starting one only
+  reads, through the same read-only stack, and the `realtime` caps limit how many points run
+  at once, how many per controller, and for how long.
 
 **Names, other sites, sizes**
 - **Only this computer's names.** The pages answer only to this computer's own names and

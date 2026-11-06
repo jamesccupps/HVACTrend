@@ -174,6 +174,31 @@ def _buckets(dal: Any, pid: int, start: int, end: int, res: str, step: int) -> l
     return dal.rollup_series(pid, start, end, res)
 
 
+def realtime_csv(metas: list[dict], series: dict[int, list]) -> str:
+    """A realtime session as CSV, in the 2-minute export's layout: the four time columns,
+    then a value and a quality column per point. `series` maps point id to its
+    (ts_utc, value_num, value_text, quality) rows. Readings are stamped on a grid (every 5 s
+    at :00, :05...), so one row is one moment; a point on a slower rate is blank between."""
+    by_t: dict = {}
+    for i, m in enumerate(metas):
+        for t, num, text, q in series.get(m["id"], []):
+            by_t.setdefault(int(t), {})[i] = (text if text is not None else num, q)
+    buf = io.StringIO()
+    w = _SafeWriter(buf)
+    hdr = ["timestamp_iso", "timestamp_utc", "timestamp_local", "resolution"]
+    for m in metas:
+        hdr += [_label(m), _label(m) + " quality"]
+    w.writerow(hdr)
+    for t in sorted(by_t):
+        line = [datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), t,
+                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t)), "realtime"]
+        for i in range(len(metas)):
+            v, q = by_t[t].get(i, (None, None))
+            line += [_blank(v), q or ""]
+        w.writerow(line)
+    return buf.getvalue()
+
+
 def outdoor_points(dal: Any, start: int, end: int) -> list[dict]:
     """The building's own outdoor-air sensors with readings in [start, end), as point_meta
     rows: the Siemens and Trane outdoor temperature and humidity, the Trane dew point and

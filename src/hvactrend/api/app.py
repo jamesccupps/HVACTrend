@@ -223,9 +223,17 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
                              "/api/views",
                              # the OVR marks, refreshed once a minute: the same facts
                              # /api/logged already carries, without its per-point counts
-                             "/api/overrides"})
+                             "/api/overrides",
+                             # realtime trends: the page, its points, readings, sessions
+                             # and their CSV (2026-11-06: started from anywhere on the VLAN)
+                             "/realtime", "/api/realtime", "/api/realtime/points",
+                             "/api/realtime/data", "/api/realtime/history",
+                             "/api/realtime/export"})
     # read-only despite the verb: ids in a body. /api/export is the viewer's "Export data".
-    _VIEWER_POST = frozenset({"/api/series", "/api/export"})
+    # Starting and stopping a realtime trend changes what is read, never a controller, and
+    # the caps bound it.
+    _VIEWER_POST = frozenset({"/api/series", "/api/export", "/api/realtime/start",
+                              "/api/realtime/stop"})
 
     def _local_hosts() -> frozenset:
         """Addresses that count as "on the box". Loopback is not enough: browsing to this
@@ -276,13 +284,13 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             # A tech types the bare address; send them to what they came for.
             return RedirectResponse("/trends", status_code=307)
 
-        if method == "GET" and path == "/trends":
+        if method == "GET" and path in ("/trends", "/realtime"):
             # Serve the viewer with its nav and rename controls hidden. Renaming is not a
             # cosmetic concern: display_name FEEDS THE ROLE CLASSIFIER, so a visitor
             # renaming a point would quietly change what the analysis measures. The write
             # endpoint is blocked below regardless; this stops the page offering a control
-            # that cannot work.
-            html = (_STATIC / "trends.html").read_text(encoding="utf-8")
+            # that cannot work. The two pages' links to each other stay.
+            html = (_STATIC / f"{path.strip('/')}.html").read_text(encoding="utf-8")
             return _HTML(html.replace("<body>", '<body class="viewer-only">', 1))
 
         allowed = (method == "GET" and path in _VIEWER_GET) or \
@@ -1443,6 +1451,187 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         """The alarm rules' open incidents, worst first. Read-only, from the database; not
         on the remote viewer's list."""
         return {"open": _open_incidents()}
+
+    # ── realtime trends (collector/realtime.py) ──────────────────────────────
+    # Chosen points read every few seconds for a set time, each point for its own time if
+    # wanted. Open to the VLAN viewer too (the operator: "someone somewhere else should be
+    # able to start it"): starting one only reads, and the caps bound how much.
+    _RT_MAX_IDS = 60
+
+    def _rt_label(r: dict) -> str:
+        name = r.get("display_name") or (r.get("name") or "").split("|")[0].strip()
+        return f"{r['system_code']} {name}".strip() if r.get("system_code") else name
+
+    def _rt_point(r: dict) -> dict:
+        return {"id": r["point_id"], "label": _rt_label(r), "name": r.get("name"),
+                "system_code": r.get("system_code"), "units": r.get("units_text"),
+                "object_type": r.get("object_type"), "logged": bool(r.get("logged")),
+                "controller": r.get("device_name")}
+
+    def _rt_state() -> dict[str, Any]:
+        from ..collector import realtime as _realtime
+        dal = app.state.dal
+        now = int(time.time())
+        runs = [r for r in dal.fast_runs_open() if int(r["ends_utc"]) > now]
+        last = dal.fast_last(r["point_id"] for r in runs)
+        col = app.state.collector
+        running = []
+        for r in runs:
+            lr = last.get(r["point_id"])
+            running.append({**_rt_point(r), "run_id": r["run_id"], "group_id": r["group_id"],
+                            "interval_s": r["interval_s"], "started_utc": r["started_utc"],
+                            "ends_utc": r["ends_utc"],
+                            "last": ({"t": lr[0], "v": lr[1], "vt": lr[2], "q": lr[3]}
+                                     if lr else None)})
+        return {"now": now, "running": running,
+                "limits": _realtime.limits(app.state.config),
+                "reading": col is not None,
+                # why it is not: the bind error, when there is one
+                "why": None if col is not None else (app.state.bind_error or None)}
+
+    @app.get("/realtime", response_class=HTMLResponse)
+    async def realtime_page() -> str:
+        return (_STATIC / "realtime.html").read_text(encoding="utf-8")
+
+    @app.get("/api/realtime")
+    async def realtime_state() -> dict[str, Any]:
+        """What is running, each point's newest reading, the caps, and whether reading is
+        possible now (it needs the collector's BACnet connection)."""
+        return _rt_state()
+
+    @app.get("/api/realtime/points")
+    async def realtime_points(q: str = "", limit: int = 40) -> dict[str, Any]:
+        """Points a realtime trend can read, matching every word of `q`; logged ones first."""
+        rows = app.state.dal.search_fast_points(q[:120], max(1, min(int(limit), 100)))
+        return {"points": [_rt_point(r) for r in rows]}
+
+    @app.post("/api/realtime/start")
+    async def realtime_start(payload: dict = Body(...)) -> dict[str, Any]:
+        """Body: {points: [{id, minutes, interval_s}]}. Each point runs for its own minutes
+        at its own rate; a point already running takes the new ones. Refused (409) over the
+        caps, with what is wrong."""
+        from ..collector import realtime as _realtime
+        col = app.state.collector
+        if col is None:
+            raise HTTPException(status_code=503, detail=(
+                "Realtime trends need the BACnet connection, and it is not running now."))
+        try:
+            wanted = [{"id": int(w["id"]), "minutes": int(w["minutes"]),
+                       "interval_s": int(w["interval_s"])}
+                      for w in (payload.get("points") or [])][:_RT_MAX_IDS]
+        except (KeyError, TypeError, ValueError, OverflowError, AttributeError):
+            raise HTTPException(status_code=400,
+                                detail="body needs points: [{id, minutes, interval_s}]")
+        if not wanted:
+            raise HTTPException(status_code=400, detail="pick at least one point")
+        dal = app.state.dal
+        now = int(time.time())
+        dal.finish_fast_runs(now)
+        items, err = _realtime.plan_start(dal.fast_runs_open(), wanted,
+                                          dal.fast_points(w["id"] for w in wanted),
+                                          _realtime.limits(app.state.config), now)
+        if err:
+            raise HTTPException(status_code=409, detail=err)
+        dal.start_fast_runs(items, now)
+        col.realtime.poke()
+        logger.info("realtime: started %d point(s)", len(items))
+        return _rt_state()
+
+    @app.post("/api/realtime/stop")
+    async def realtime_stop(payload: dict = Body(...)) -> dict[str, Any]:
+        """Body: {run_ids: [int]} for some, or {all: true} for every one running."""
+        dal = app.state.dal
+        now = int(time.time())
+        if payload.get("all") is True:
+            n = dal.stop_fast_runs(None, now)
+        else:
+            try:
+                ids = [int(i) for i in payload.get("run_ids") or []][:_RT_MAX_IDS]
+            except (TypeError, ValueError, OverflowError):
+                raise HTTPException(status_code=400, detail="body needs run_ids: [int] or all")
+            n = dal.stop_fast_runs(ids, now)
+        if app.state.collector is not None:
+            app.state.collector.realtime.poke()
+        logger.info("realtime: stopped %d run(s)", n)
+        return {**_rt_state(), "stopped": n}
+
+    def _rt_ids(ids: str) -> list[int]:
+        try:
+            out = list(dict.fromkeys(int(i) for i in ids.split(",") if i.strip()))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="ids must be point ids, comma-separated")
+        if not out or len(out) > _RT_MAX_IDS:
+            raise HTTPException(status_code=400, detail=f"1 to {_RT_MAX_IDS} point ids")
+        return out
+
+    @app.get("/api/realtime/data")
+    async def realtime_data(ids: str, since: Optional[int] = None,
+                            start: Optional[int] = None,
+                            end: Optional[int] = None) -> dict[str, Any]:
+        """Realtime readings: newer than `since` (the live chart's next slice), or from
+        `start` to `end` (a past session). Rows are [t, value, quality]; a long window is
+        thinned, keeping each stretch's lowest and highest reading."""
+        from ..collector import realtime as _realtime
+        pids = _rt_ids(ids)
+        now = int(time.time())
+        if since is not None:                      # at most the window below, however old
+            t0, t1 = max(int(since) + 1, now - 8 * 86400), now
+        elif start is not None and end is not None:
+            t0, t1 = int(start), int(end)
+        else:
+            raise HTTPException(status_code=400, detail="give since, or start and end")
+        if t1 < t0 or t1 - t0 > 8 * 86400:
+            raise HTTPException(status_code=400, detail="a window of at most 8 days")
+        dal = app.state.dal
+        meta = dal.fast_points(pids)
+        series = {}
+        for pid in pids:
+            rows = [(t, num, q) for t, num, _text, q in dal.fast_series(pid, t0, t1)]
+            series[pid] = _realtime.thin([(t, v if q == "good" else None, q)
+                                          for t, v, q in rows])
+        return {"now": now, "series": series,
+                "meta": {pid: _rt_point(m) for pid, m in meta.items()}}
+
+    @app.get("/api/realtime/history")
+    async def realtime_history(limit: int = 30) -> dict[str, Any]:
+        """The latest sessions (what one Start began), newest first, with their runs."""
+        groups = app.state.dal.fast_history(max(1, min(int(limit), 100)))
+        for g in groups:
+            g["runs"] = [{**r, "label": _rt_label(r), "units": r.get("units_text")}
+                         for r in g["runs"]]
+        return {"sessions": groups, "now": int(time.time())}
+
+    @app.get("/api/realtime/export")
+    async def realtime_export(group: Optional[int] = None, ids: Optional[str] = None,
+                              start: Optional[int] = None, end: Optional[int] = None) -> Any:
+        """A session (`group`), or points over a window (`ids`, `start`, `end`), as CSV in the
+        2-minute export's layout."""
+        from fastapi.responses import Response
+
+        from .. import export as _export
+        dal = app.state.dal
+        now = int(time.time())
+        if group is not None:
+            g = next((x for x in dal.fast_history(1000) if x["group_id"] == int(group)), None)
+            if g is None:
+                raise HTTPException(status_code=404, detail="no such session")
+            pids = list(dict.fromkeys(r["point_id"] for r in g["runs"]))
+            t0, t1 = int(g["started_utc"]), min(int(g["ended_utc"]), now)
+        elif ids and start is not None and end is not None:
+            pids, t0, t1 = _rt_ids(ids), int(start), int(end)
+        else:
+            raise HTTPException(status_code=400, detail="give group, or ids with start and end")
+        if t1 < t0 or t1 - t0 > 8 * 86400:
+            raise HTTPException(status_code=400, detail="a window of at most 8 days")
+        meta = dal.fast_points(pids)
+        metas = [{"id": p, "name": meta[p].get("name"), "display_name": meta[p].get("display_name"),
+                  "system_code": meta[p].get("system_code")} for p in pids if p in meta]
+        text = await asyncio.to_thread(
+            _export.realtime_csv, metas,
+            {m["id"]: dal.fast_series(m["id"], t0, t1) for m in metas})
+        name = time.strftime("realtime-%Y%m%d-%H%M.csv", time.localtime(t0))
+        return Response(text, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.get("/api/alerts")
     async def alerts(status: str | None = None, limit: int = 100) -> dict[str, Any]:

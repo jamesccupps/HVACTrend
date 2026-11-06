@@ -1875,6 +1875,156 @@ class SQLiteDAL(DAL):
             "SELECT * FROM incidents WHERE status = 'open' OR opened_utc >= ? "
             "OR resolved_utc >= ? ORDER BY opened_utc", (int(t0), int(t0)))]
 
+    # ── realtime trends (collector/realtime.py, api /realtime) ───────────────
+    # Object types with a present value worth charting: what a realtime trend can read.
+    FAST_TYPES = ("analog-input", "analog-output", "analog-value", "binary-input",
+                  "binary-output", "binary-value", "multi-state-input", "multi-state-output",
+                  "multi-state-value")
+    _FAST_COLS = (
+        "p.id AS point_id, p.name, p.display_name, p.units_text, p.object_type, "
+        " p.object_instance, p.enabled AS logged, s.code AS system_code, d.id AS device_id, "
+        " d.address, d.rpm_supported, d.name AS device_name ")
+    _FAST_JOINS = ("JOIN devices d ON d.id = p.device_id "
+                   "LEFT JOIN systems s ON s.id = p.system_id ")
+    _FAST_POINT_SQL = "SELECT " + _FAST_COLS + "FROM points p " + _FAST_JOINS
+
+    def fast_points(self, ids: Iterable[int]) -> dict[int, dict]:
+        """The points among `ids` a realtime trend can read: BACnet objects with a present
+        value, on a controller with an address."""
+        ids = [int(i) for i in ids]
+        if not ids:
+            return {}
+        types = ", ".join("?" for _ in self.FAST_TYPES)
+        rows = self._conn.execute(
+            self._FAST_POINT_SQL + f"WHERE p.id IN ({', '.join('?' for _ in ids)}) "
+            f"AND p.source = 'bacnet' AND p.object_type IN ({types}) "
+            "AND d.address IS NOT NULL", (*ids, *self.FAST_TYPES)).fetchall()
+        return {r["point_id"]: dict(r) for r in rows}
+
+    def search_fast_points(self, q: str, limit: int = 40) -> list[dict]:
+        """Points a realtime trend can read whose name, label or unit matches every word of
+        `q`; logged points first. Unlogged ones too: a point can be watched without being
+        recorded every 2 minutes."""
+        types = ", ".join("?" for _ in self.FAST_TYPES)
+        sql = (self._FAST_POINT_SQL + "WHERE p.source = 'bacnet' "
+               f"AND p.object_type IN ({types}) AND d.address IS NOT NULL ")
+        args: list = list(self.FAST_TYPES)
+        for word in (q or "").lower().split()[:6]:
+            sql += ("AND (lower(p.name) LIKE ? OR lower(COALESCE(p.display_name, '')) LIKE ? "
+                    "OR lower(COALESCE(s.code, '')) LIKE ? "
+                    "OR lower(COALESCE(p.description, '')) LIKE ?) ")
+            args += [f"%{word}%"] * 4
+        sql += "ORDER BY p.enabled DESC, s.code IS NULL, s.code, p.name LIMIT ?"
+        args.append(int(limit))
+        return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
+
+    def fast_runs_open(self) -> list[dict]:
+        """Every realtime trend still running, with what reading and showing it takes."""
+        rows = self._conn.execute(
+            "SELECT r.id AS run_id, r.group_id, r.interval_s, r.started_utc, r.ends_utc, "
+            + self._FAST_COLS + "FROM fast_runs r JOIN points p ON p.id = r.point_id "
+            + self._FAST_JOINS + "WHERE r.stopped_utc IS NULL "
+            "ORDER BY r.started_utc, r.id").fetchall()
+        return [dict(r) for r in rows]
+
+    def start_fast_runs(self, items: Iterable[tuple[int, int, int]], now_utc: int) -> int:
+        """Start (point_id, interval_s, ends_utc) runs as one group and return its id. A point
+        already running keeps its row, with the new rate and end."""
+        with self._tx():
+            group = self._conn.execute(
+                "SELECT COALESCE(MAX(group_id), 0) + 1 FROM fast_runs").fetchone()[0]
+            for pid, interval_s, ends in items:
+                row = self._conn.execute(
+                    "SELECT id FROM fast_runs WHERE point_id = ? AND stopped_utc IS NULL",
+                    (int(pid),)).fetchone()
+                if row:
+                    self._conn.execute("UPDATE fast_runs SET interval_s = ?, ends_utc = ? "
+                                       "WHERE id = ?", (int(interval_s), int(ends), row[0]))
+                else:
+                    self._conn.execute(
+                        "INSERT INTO fast_runs (group_id, point_id, interval_s, started_utc, "
+                        "ends_utc) VALUES (?,?,?,?,?)",
+                        (group, int(pid), int(interval_s), int(now_utc), int(ends)))
+        return int(group)
+
+    def stop_fast_runs(self, run_ids: Optional[Iterable[int]], now_utc: int,
+                       reason: str = "stopped") -> int:
+        """Stop these runs (None: every one running). Returns how many stopped."""
+        before = self._conn.total_changes
+        if run_ids is None:
+            self._conn.execute("UPDATE fast_runs SET stopped_utc = ?, stop_reason = ? "
+                               "WHERE stopped_utc IS NULL", (int(now_utc), reason))
+        else:
+            ids = [int(i) for i in run_ids]
+            if ids:
+                self._conn.execute(
+                    "UPDATE fast_runs SET stopped_utc = ?, stop_reason = ? WHERE stopped_utc "
+                    f"IS NULL AND id IN ({', '.join('?' for _ in ids)})",
+                    (int(now_utc), reason, *ids))
+        return self._conn.total_changes - before
+
+    def finish_fast_runs(self, now_utc: int) -> int:
+        """Close the runs whose time is up, stamped at their own end."""
+        before = self._conn.total_changes
+        self._conn.execute("UPDATE fast_runs SET stopped_utc = ends_utc, stop_reason = "
+                           "'finished' WHERE stopped_utc IS NULL AND ends_utc <= ?",
+                           (int(now_utc),))
+        return self._conn.total_changes - before
+
+    def write_fast_samples(self, samples: Iterable[Sample]) -> int:
+        rows = [(s.point_id, s.ts_utc, s.value_num, s.value_text,
+                 s.quality.value if isinstance(s.quality, Quality) else str(s.quality))
+                for s in samples]
+        if rows:
+            with self._tx():
+                self._conn.executemany(
+                    "INSERT OR IGNORE INTO fast_samples (point_id, ts_utc, value_num, "
+                    "value_text, quality) VALUES (?,?,?,?,?)", rows)
+        return len(rows)
+
+    def fast_series(self, point_id: int, t0: int, t1: int) -> list[tuple]:
+        """(ts_utc, value_num, value_text, quality) for one point, oldest first."""
+        return [tuple(r) for r in self._conn.execute(
+            "SELECT ts_utc, value_num, value_text, quality FROM fast_samples "
+            "WHERE point_id = ? AND ts_utc BETWEEN ? AND ? ORDER BY ts_utc",
+            (int(point_id), int(t0), int(t1)))]
+
+    def fast_last(self, point_ids: Iterable[int]) -> dict[int, tuple]:
+        """The newest realtime reading of each point: (ts_utc, value_num, value_text,
+        quality)."""
+        out = {}
+        for pid in dict.fromkeys(int(p) for p in point_ids):
+            r = self._conn.execute(
+                "SELECT ts_utc, value_num, value_text, quality FROM fast_samples "
+                "WHERE point_id = ? ORDER BY ts_utc DESC LIMIT 1", (pid,)).fetchone()
+            if r:
+                out[pid] = tuple(r)
+        return out
+
+    def fast_history(self, limit: int = 30) -> list[dict]:
+        """The latest realtime sessions (the runs one Start made), newest first, each with
+        its runs."""
+        groups = [dict(r) for r in self._conn.execute(
+            "SELECT group_id, MIN(started_utc) AS started_utc, "
+            " MAX(COALESCE(stopped_utc, ends_utc)) AS ended_utc, "
+            " SUM(stopped_utc IS NULL) AS running FROM fast_runs GROUP BY group_id "
+            "ORDER BY MIN(started_utc) DESC, group_id DESC LIMIT ?", (int(limit),))]
+        if not groups:
+            return []
+        ids = [g["group_id"] for g in groups]
+        runs: dict[int, list] = {}
+        for r in self._conn.execute(
+                "SELECT r.id AS run_id, r.group_id, r.point_id, r.interval_s, r.started_utc, "
+                " r.ends_utc, r.stopped_utc, r.stop_reason, p.name, p.display_name, "
+                " p.units_text, p.object_type, s.code AS system_code "
+                "FROM fast_runs r JOIN points p ON p.id = r.point_id "
+                "LEFT JOIN systems s ON s.id = p.system_id "
+                f"WHERE r.group_id IN ({', '.join('?' for _ in ids)}) ORDER BY r.id", ids):
+            runs.setdefault(r["group_id"], []).append(dict(r))
+        for g in groups:
+            g["runs"] = runs.get(g["group_id"], [])
+        return groups
+
     # ── who is in control of each commandable point (bacnet/priority.py) ─────
     def command_targets(self, types: Iterable[str]) -> list[dict]:
         """The priority read's work-list: every enabled BACnet point of a commandable type,

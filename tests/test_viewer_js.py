@@ -37,6 +37,21 @@ def test_viewer_javascript():
         pytest.fail("viewer JS tests failed:\n" + proc.stdout[-6000:] + "\n" + proc.stderr[-2000:])
 
 
+@pytest.mark.skipif(shutil.which("node") is None,
+                    reason="node not installed — Realtime page JS tests skipped")
+def test_realtime_javascript():
+    env = dict(os.environ)
+    env["TZ"] = "America/New_York"
+    env.pop("HVACTREND_REALTIME_HTML", None)     # always test the SHIPPED file
+    proc = subprocess.run(
+        ["node", "--test", str(JS_DIR / "realtime.test.mjs")],
+        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=120,
+    )
+    if proc.returncode != 0:
+        pytest.fail("Realtime JS tests failed:\n" + proc.stdout[-6000:] + "\n"
+                    + proc.stderr[-2000:])
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_the_js_harness_would_notice_a_regression():
     """A test that passes against both the broken and the fixed code is not a test.

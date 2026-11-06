@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HVACTrend — Realtime</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d1117'/><polyline points='5,22 11,14 16,18 22,8 27,12' fill='none' stroke='%233fd07f' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+  /* Realtime trends: chosen points read every few seconds for a set time (2026-11-06). The
+     trend viewer's look; laid out for a phone first, since that is where a tech in the
+     mechanical room has it. */
+  :root {
+    --bg:#0d1117; --panel:#151c26; --panel2:#111823; --raised:#1b2430;
+    --line:#222c3a; --line-2:#2c3847;
+    --fg:#dbe4ef; --dim:#8c9aab; --dim-2:#64707f;
+    --accent:#3fd07f; --accent2:#4da3ff;
+    --fault:#ff6b60; --amber:#f5b642;
+    --ui: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono: ui-monospace,"Cascadia Code",Consolas,"SF Mono",Menlo,monospace;
+    --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-lg:15px;
+    --r:5px;
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:var(--fs-md)/1.45 var(--ui);
+    -webkit-font-smoothing:antialiased; }
+  .num { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  :focus-visible { outline:2px solid var(--accent2); outline-offset:1px; }
+
+  header { padding:0 14px; height:42px; border-bottom:1px solid var(--line); display:flex;
+    align-items:center; gap:18px; background:var(--panel2); position:sticky; top:0; z-index:5;
+    overflow-x:auto; scrollbar-width:none; }
+  header::-webkit-scrollbar { display:none; }
+  header h1 { font-size:var(--fs-md); margin:0; color:var(--accent); font-weight:600;
+    white-space:nowrap; }
+  header a { color:var(--dim); text-decoration:none; font-size:var(--fs-sm); white-space:nowrap; }
+  header a:hover { color:var(--fg); }
+  header a.active { color:var(--fg); font-weight:500; }
+  header .status { color:var(--dim); font-size:var(--fs-sm); margin-left:auto; white-space:nowrap; }
+  /* a computer elsewhere on the VLAN gets this page and the trend viewer, not the rest */
+  body.viewer-only header a[href]:not(.active):not(.vo) { display:none; }
+
+  main { max-width:1280px; margin:0 auto; padding:14px; display:grid; gap:14px;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+    padding:12px; min-width:0; }
+  .wide { grid-column:1 / -1; }
+  .hd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px; }
+  .hd h2 { font-size:var(--fs-sm); text-transform:uppercase; letter-spacing:.06em; color:var(--dim);
+    margin:0; font-weight:600; }
+  .hd .sp { flex:1; }
+  button, select, input { font:inherit; font-size:var(--fs-sm); color:var(--fg);
+    background:var(--raised); border:1px solid var(--line-2); border-radius:var(--r);
+    padding:5px 9px; min-height:30px; }
+  button { cursor:pointer; white-space:nowrap; }
+  button:hover:not(:disabled) { border-color:var(--accent2); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:var(--accent2); color:#04121f; border-color:var(--accent2);
+    font-weight:600; }
+  button.danger { color:var(--fault); }
+  .seg { display:inline-flex; }
+  .seg button { border-radius:0; margin-left:-1px; }
+  .seg button:first-child { border-radius:var(--r) 0 0 var(--r); margin-left:0; }
+  .seg button:last-child { border-radius:0 var(--r) var(--r) 0; }
+  .seg button.on { background:var(--accent2); color:#04121f; border-color:var(--accent2); }
+  input[type=search] { width:100%; }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .muted { color:var(--dim); }
+  .small { font-size:var(--fs-xs); }
+  .msg { padding:9px 12px; border-radius:var(--r); border:1px solid var(--amber);
+    background:#2a2112; color:var(--amber); }
+  .err { color:var(--fault); margin-top:8px; }
+  .results { max-height:260px; overflow:auto; border:1px solid var(--line);
+    border-radius:var(--r); margin-top:6px; }
+  .results .r { display:flex; align-items:center; gap:8px; padding:6px 8px;
+    border-bottom:1px solid var(--line); }
+  .results .r:last-child { border-bottom:none; }
+  .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tag { font-size:10px; border:1px solid var(--line-2); border-radius:3px; padding:0 5px;
+    color:var(--dim); white-space:nowrap; }
+  .tag.run { border-color:var(--accent); color:var(--accent); }
+  .tag.bad { border-color:var(--fault); color:var(--fault); }
+  #pending { margin:10px 0 4px; }
+  .pend { display:flex; align-items:center; gap:6px; padding:6px 0;
+    border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .pend .nm { flex:1 1 160px; }
+  .it { display:flex; align-items:center; gap:6px 10px; padding:8px 0;
+    border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .it:last-child, .pend:last-child { border-bottom:none; }
+  .it .who { flex:1 1 180px; min-width:0; }
+  .it .who .nm { display:block; }
+  .it .val { min-width:76px; text-align:right; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px;
+    vertical-align:-1px; flex:none; }
+  .chart { margin-bottom:14px; }
+  .chart:last-child { margin-bottom:0; }
+  .chart .ttl { font-size:var(--fs-xs); color:var(--dim); text-transform:uppercase;
+    letter-spacing:.06em; }
+  .leg { display:flex; flex-wrap:wrap; gap:3px 12px; font-size:var(--fs-xs); margin:3px 0 4px; }
+  .leg span { cursor:pointer; white-space:nowrap; user-select:none; }
+  .leg span.off { opacity:.4; text-decoration:line-through; }
+  .chart canvas { width:100%; height:220px; display:block; touch-action:pan-y;
+    cursor:crosshair; background:var(--panel2); border-radius:3px; }
+  .sess { display:flex; align-items:center; gap:6px 10px; padding:8px 0;
+    border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .sess:last-child { border-bottom:none; }
+  .sess .what { flex:1 1 240px; min-width:0; }
+  .sess .pts { color:var(--dim); font-size:var(--fs-xs); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  @media (max-width: 760px) {
+    main { grid-template-columns:minmax(0,1fr); padding:10px; gap:10px; }
+    header { gap:14px; }
+    button, select, input { min-height:36px; }
+    .chart canvas { height:200px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>HVACTrend</h1>
+  <a href="/">Point Selection</a>
+  <a href="/coverage">Point Coverage</a>
+  <a href="/dashboard">Unit Dashboard</a>
+  <a href="/trends" class="vo">Trend Viewer</a>
+  <a href="/realtime" class="active">Realtime</a>
+  <a href="/reports">AI Reports</a>
+  <a href="/settings">Settings</a>
+  <span class="status num" id="status">loading…</span>
+</header>
+<main>
+  <div class="msg wide" id="offline" hidden></div>
+
+  <section class="card" id="startCard">
+    <div class="hd"><h2>Start</h2><span class="sp"></span><span class="small muted" id="caps"></span></div>
+    <input type="search" id="q" placeholder="Find points: name, label, unit (AC-1 discharge…)"
+           autocomplete="off" aria-label="Find points">
+    <div class="results" id="results" hidden></div>
+    <div id="pending"></div>
+    <div class="row">
+      <span class="small muted">For all:</span>
+      <select id="allDur" aria-label="How long, for all"></select>
+      <select id="allRate" aria-label="How often, for all"></select>
+      <button id="applyAll" disabled>Apply to all</button>
+      <span class="sp" style="flex:1"></span>
+      <button class="primary" id="startBtn" disabled>Start</button>
+    </div>
+    <div class="err small" id="startErr" hidden></div>
+  </section>
+
+  <section class="card" id="runCard">
+    <div class="hd"><h2>Running</h2><span class="sp"></span>
+      <button class="danger" id="stopAll" disabled>Stop all</button></div>
+    <div id="running"><div class="muted small">Nothing running. Find points on the left (above,
+      on a phone), add them, and press Start.</div></div>
+  </section>
+
+  <section class="card wide" id="chartCard">
+    <div class="hd"><h2 id="chartTitle">Live</h2><span class="sp"></span>
+      <span class="seg" id="winBtns"></span>
+      <button id="backLive" hidden>Back to live</button>
+      <button id="csvBtn" disabled title="The readings shown, as CSV">CSV</button></div>
+    <div id="charts"><div class="muted small">Running points are charted here as they are read.
+      Hover, or touch and drag, to read the values at a moment.</div></div>
+  </section>
+
+  <section class="card wide" id="histCard">
+    <div class="hd"><h2>Sessions</h2><span class="sp"></span>
+      <span class="small muted">kept; open one to chart it, or take it as CSV</span></div>
+    <div id="history"><div class="muted small">None yet.</div></div>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+
+// ── UI auth token (only needed when api.auth.enabled), as on the other pages ─────────────
+const TOKKEY='hvactrend_ui_token';
+function authHeaders(){const t=sessionStorage.getItem(TOKKEY)||'';return t?{'Authorization':'Bearer '+t}:{};}
+function authBar(show){
+  let b=document.getElementById('authbar');
+  if(!b){
+    b=document.createElement('div'); b.id='authbar';
+    b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;display:flex;gap:8px;align-items:center;'
+      +'padding:8px 12px;font:13px system-ui;background:#3a2a12;color:#f0b429;border-bottom:1px solid #7a5a20';
+    b.innerHTML='<span>This server requires an auth token (api.auth is on).</span>'
+      +'<input id="authtok" type="password" autocomplete="off" placeholder="UI auth token" style="flex:0 1 260px;padding:4px 6px">'
+      +'<button id="authuse">Use token</button><button id="authx" title="dismiss">&#10005;</button>';
+    document.body.appendChild(b);
+    b.querySelector('#authuse').onclick=()=>{const v=b.querySelector('#authtok').value;
+      if(v){sessionStorage.setItem(TOKKEY,v); location.reload();}};
+    b.querySelector('#authx').onclick=()=>{b.style.display='none';};
+  }
+  b.style.display=show?'flex':'none';
+}
+async function j(url, opts){
+  opts=opts||{};
+  const headers=Object.assign({},opts.headers||{},authHeaders());
+  const r = await fetch(url, Object.assign({},opts,{headers}));
+  if(r.status===401) authBar(true);
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+  return r.json();
+}
+function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
+function esc(s){ return (s==null?'':s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+const PALETTE = ['#4aa8ff','#39d353','#f0b429','#ff5f56','#c084fc','#2dd4bf',
+                 '#fb923c','#f472b6','#a3e635','#60a5fa','#facc15','#34d399'];
+const DURATIONS = [[5,'5 min'],[10,'10 min'],[15,'15 min'],[30,'30 min'],[60,'1 h'],[120,'2 h'],
+                   [240,'4 h'],[480,'8 h'],[720,'12 h'],[1440,'24 h']];
+const WINDOWS = [[300,'5 min'],[900,'15 min'],[3600,'1 h'],[14400,'4 h'],[0,'All']];
+const UNIT_SHORT = {'degrees-fahrenheit':'°F','degrees-celsius':'°C','percent':'%',
+  'percent-relative-humidity':'%RH','inches-of-water':'in. w.c.','pounds-force-per-square-inch':'psi',
+  'cubic-feet-per-minute':'cfm','revolutions-per-minute':'rpm','kilowatts':'kW','hertz':'Hz',
+  'amperes':'A','volts':'V','btus-per-pound-dry-air':'Btu/lb','us-gallons-per-minute':'gpm',
+  'feet-per-minute':'fpm','parts-per-million':'ppm','delta-degrees-fahrenheit':'Δ°F'};
+const POLL_MS = 2000;
+const M = {l:52, r:10, t:10, b:22};          // chart margins, CSS px
+const CSSV = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+const S = {
+  now: Math.floor(Date.now()/1000), skew: 0, limits: null, reading: true, why: null,
+  running: [], pending: [], sessions: [],
+  mode: 'live', session: null, win: 900,
+  data: {}, meta: {}, live: new Set(), loaded: new Set(), since: 0,
+  sdata: {}, spids: [],
+  hidden: new Set(), hoverT: null, hoverChart: null,
+  colors: {}, nextColor: 0, charts: {}, busy: false,
+};
+
+// ── pure helpers (tests/js/realtime.test.mjs runs these) ──────────────────────────────────
+function unitKey(m){
+  const ot=(m&&m.object_type)||'';
+  if(ot.startsWith('binary')) return 'onoff';
+  if(ot.startsWith('multi-state')) return 'state';
+  return (m&&m.units)||'';
+}
+function unitLabel(key){
+  if(key==='onoff') return 'On / off';
+  if(key==='state') return 'State';
+  if(!key || key==='no-units') return 'No units';
+  return UNIT_SHORT[key] || key.replace(/-/g,' ');
+}
+function fmtVal(v, key){
+  if(v==null||!isFinite(v)) return '—';
+  if(key==='onoff') return v ? 'ON' : 'OFF';
+  if(key==='state') return 'state '+Math.round(v);
+  const a=Math.abs(v), s = a>=100 ? v.toFixed(0) : a>=10 ? v.toFixed(1) : v.toFixed(2);
+  const u=UNIT_SHORT[key];
+  return u ? s+' '+u : s;
+}
+function fmtLeft(s){
+  s=Math.max(0,Math.round(s));
+  if(s<60) return s+' s';
+  if(s<3600) return Math.min(59,Math.max(1,Math.round(s/60)))+' min';
+  const h=Math.floor(s/3600), m=Math.round((s%3600)/60);
+  return m ? `${h} h ${String(m).padStart(2,'0')} min` : `${h} h`;
+}
+function fmtRate(s){ return s<60 ? `every ${s} s` : `every ${s/60} min`; }
+function fmtClock(t, sec){
+  const d=new Date(t*1000), p=x=>String(x).padStart(2,'0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}`+(sec?':'+p(d.getSeconds()):'');
+}
+function fmtDay(t){
+  const d=new Date(t*1000);
+  return d.toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'});
+}
+function niceTicks(lo, hi, n){
+  if(!(hi>lo)){ const c=isFinite(lo)?lo:0; lo=c-1; hi=c+1; }
+  const raw=(hi-lo)/Math.max(1,n), p=Math.pow(10,Math.floor(Math.log10(raw)));
+  const step=[1,2,2.5,5,10].map(m=>m*p).find(s=>s>=raw*(1-1e-9)) || 10*p;
+  const out=[];
+  for(let v=Math.ceil(lo/step-1e-9)*step; v<=hi+step*1e-9; v+=step) out.push(+v.toFixed(10));
+  return {step, ticks:out};
+}
+const TSTEPS=[5,10,15,30,60,120,300,600,900,1800,3600,7200,10800,21600,43200,86400];
+function timeTicks(t0, t1, n){
+  const span=Math.max(1,t1-t0), step=TSTEPS.find(s=>span/s<=n) || 86400;
+  const off=new Date(t0*1000).getTimezoneOffset()*60;      // on the local clock's grid
+  const out=[];
+  for(let t=Math.ceil((t0+off)/step)*step-off; t<=t1; t+=step) out.push(t);
+  return {step, ticks:out};
+}
+function fmtTick(t, step, span){
+  const d=new Date(t*1000), p=x=>String(x).padStart(2,'0');
+  if(span>86400 && !d.getHours() && !d.getMinutes()) return `${p(d.getMonth()+1)}/${p(d.getDate())}`;
+  return fmtClock(t, step<60);
+}
+function nearest(rows, t){
+  let lo=0, hi=rows.length-1;
+  if(hi<0) return -1;
+  while(lo<hi){ const mid=(lo+hi)>>1; if(rows[mid][0]<t) lo=mid+1; else hi=mid; }
+  if(lo>0 && Math.abs(rows[lo-1][0]-t) <= Math.abs(rows[lo][0]-t)) lo--;
+  return lo;
+}
+// One series as polyline points, null where the line breaks: a reading with no value, or
+// none for longer than gapS. Readings in the same pixel column are drawn as that column's
+// first, lowest, highest and last, so a day of 5-s readings costs a few hundred points and a
+// spike still shows. `step` draws an on/off or state point as steps.
+function seriesPath(rows, t0, t1, X, Y, gapS, step){
+  const out=[];
+  let col=null, prevT=null;
+  const add=(x,y)=>out.push([x,y]);
+  const flush=()=>{
+    if(!col) return;
+    const last=out.length ? out[out.length-1] : null;
+    if(step && last) add(col.x, last[1]);
+    add(col.x, Y(col.first));
+    if(col.n>1){
+      if(col.lo!==col.hi){ add(col.x, Y(col.lo)); add(col.x, Y(col.hi)); }
+      add(col.x, Y(col.last));
+    }
+    col=null;
+  };
+  for(const r of rows){
+    const t=r[0], v=r[1];
+    if(t<t0-gapS || t>t1+gapS) continue;
+    if(v==null || (prevT!=null && t-prevT>gapS)){
+      flush();
+      if(out.length && out[out.length-1]!==null) out.push(null);
+      if(v==null){ prevT=null; continue; }
+    }
+    const x=Math.round(X(t));
+    if(col && col.x===x){ col.lo=Math.min(col.lo,v); col.hi=Math.max(col.hi,v); col.last=v; col.n++; }
+    else { flush(); col={x, first:v, lo:v, hi:v, last:v, n:1}; }
+    prevT=t;
+  }
+  flush();
+  return out;
+}
+function yRange(key, vals){
+  if(key==='onoff') return [-0.15, 1.15];
+  let lo=Infinity, hi=-Infinity;
+  for(const v of vals){ if(v<lo) lo=v; if(v>hi) hi=v; }
+  if(!isFinite(lo)) return [0, 1];
+  if(key==='state') return [Math.floor(lo)-0.5, Math.ceil(hi)+0.5];
+  if(hi-lo<1e-9){ const pad=Math.max(Math.abs(lo)*0.02, 0.01); return [lo-pad, hi+pad]; }
+  const pad=(hi-lo)*0.08;
+  return [lo-pad, hi+pad];
+}
+function mergeRows(have, rows){
+  // rows for one point, oldest first; only those newer than what is held are added
+  const last=have.length ? have[have.length-1][0] : -Infinity;
+  for(const r of rows) if(r[0]>last) have.push(r);
+  return have;
+}
+
+// ── the view: live (what runs now) or a past session ─────────────────────────────────────
+function nowS(){ return Math.floor(Date.now()/1000 + S.skew); }
+function colorOf(pid){
+  if(!(pid in S.colors)) S.colors[pid]=PALETTE[S.nextColor++ % PALETTE.length];
+  return S.colors[pid];
+}
+function runOf(pid){ return S.running.find(r=>r.id===pid); }
+function intervalOf(pid){
+  const r=runOf(pid) || (S.session && S.session.runs.find(x=>x.point_id===pid));
+  return r ? r.interval_s : 5;
+}
+function gapOf(pid){ return 3*intervalOf(pid)+2; }
+function view(){
+  if(S.mode==='session' && S.session){
+    const g=S.session;
+    return {data:S.sdata, pids:S.spids, t0:g.started_utc,
+            t1:Math.max(g.started_utc+10, g.running ? nowS() : g.ended_utc)};
+  }
+  // from the first reading, or the window's start once there is more than the window: a
+  // session a minute old fills the chart rather than sitting at the edge of 15 empty minutes
+  const t1=nowS();
+  const firsts=[...S.live].map(p=>{
+    const r=runOf(p), rows=S.data[p];
+    return Math.min(r ? r.started_utc : Infinity, rows && rows.length ? rows[0][0] : Infinity);
+  }).filter(isFinite);
+  const first=firsts.length ? Math.min(...firsts) : t1-60;
+  const t0=Math.min(t1-60, S.win ? Math.max(t1-S.win, first) : first);
+  const pids=[...S.live].filter(p=>runOf(p) || (S.data[p]||[]).some(r=>r[0]>=t0));
+  return {data:S.data, pids, t0, t1};
+}
+
+function layoutCharts(V){
+  const groups={};
+  for(const pid of V.pids){
+    const k=unitKey(S.meta[pid]);
+    (groups[k]=groups[k]||[]).push(pid);
+  }
+  const keys=Object.keys(groups).sort((a,b)=>(a==='onoff')-(b==='onoff') || (a==='state')-(b==='state') || a.localeCompare(b));
+  const sig=keys.map(k=>k+':'+groups[k].join(',')).join('|');
+  const box=$('#charts');
+  if(sig!==S.chartSig){
+    S.chartSig=sig; S.charts={};
+    if(!keys.length){
+      box.innerHTML='<div class="muted small">'+(S.mode==='live'
+        ? 'Running points are charted here as they are read. Hover, or touch and drag, to read the values at a moment.'
+        : 'This session has no readings.')+'</div>';
+      return;
+    }
+    box.innerHTML=keys.map(k=>`<div class="chart" data-k="${esc(k)}"><div class="ttl">${esc(unitLabel(k))}</div>
+      <div class="leg"></div><canvas aria-label="${esc(unitLabel(k))} chart"></canvas></div>`).join('');
+    box.querySelectorAll('.chart').forEach(el=>{
+      const k=el.dataset.k;
+      const ch={key:k, pids:groups[k], el, canvas:el.querySelector('canvas'),
+                base:document.createElement('canvas'), leg:el.querySelector('.leg')};
+      S.charts[k]=ch;
+      const at=e=>hoverAt(ch,e);
+      ch.canvas.addEventListener('pointermove', at);
+      ch.canvas.addEventListener('pointerdown', at);
+      ch.canvas.addEventListener('pointerleave', e=>{ if(e.pointerType==='mouse') clearHover(); });
+    });
+  }
+}
+
+function drawLegend(ch, V){
+  ch.leg.innerHTML=ch.pids.map(pid=>{
+    const m=S.meta[pid]||{}, rows=V.data[pid]||[], last=rows.length ? rows[rows.length-1] : null;
+    const val=S.mode==='live' && last ? ' '+fmtVal(last[1], ch.key) : '';
+    return `<span data-pid="${pid}" class="${S.hidden.has(pid)?'off':''}" title="${esc(fmtRate(intervalOf(pid)))}"><i class="sw" style="background:${colorOf(pid)}"></i>${esc(m.label||pid)}<b class="num">${esc(val)}</b></span>`;
+  }).join('');
+  ch.leg.querySelectorAll('span').forEach(s=>s.onclick=()=>{
+    const pid=+s.dataset.pid;
+    S.hidden.has(pid) ? S.hidden.delete(pid) : S.hidden.add(pid);
+    drawAll(true);
+  });
+}
+
+function drawBase(ch, V){
+  const dpr=window.devicePixelRatio||1, w=ch.canvas.clientWidth, h=ch.canvas.clientHeight;
+  if(!w || !h) return false;
+  for(const c of [ch.canvas, ch.base]){
+    if(c.width!==Math.round(w*dpr) || c.height!==Math.round(h*dpr)){
+      c.width=Math.round(w*dpr); c.height=Math.round(h*dpr);
+    }
+  }
+  const g=ch.base.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,w,h);
+  const {t0,t1}=V, pw=w-M.l-M.r, ph=h-M.t-M.b;
+  const vals=[];
+  for(const pid of ch.pids){
+    if(S.hidden.has(pid)) continue;
+    for(const r of V.data[pid]||[]) if(r[1]!=null && r[0]>=t0 && r[0]<=t1) vals.push(r[1]);
+  }
+  const [lo,hi]=yRange(ch.key, vals);
+  const X=t=>M.l+(t-t0)/Math.max(1,t1-t0)*pw, Y=v=>M.t+(1-(v-lo)/(hi-lo))*ph;
+  Object.assign(ch, {X, Y, w, h, t0, t1});
+  g.font='11px '+CSSV('--mono'); g.lineWidth=1;
+  g.strokeStyle=CSSV('--line'); g.fillStyle=CSSV('--dim');
+  g.textAlign='right'; g.textBaseline='middle';
+  const yt = ch.key==='onoff' ? [[0,'OFF'],[1,'ON']]
+    : niceTicks(lo, hi, Math.max(2, Math.floor(ph/34))).ticks
+        .filter(v=>v>=lo && v<=hi && (ch.key!=='state' || Number.isInteger(v))).map(v=>[v, ch.key==='state' ? String(v) : fmtVal(v,'')]);
+  for(const [v,l] of yt){
+    const y=Math.round(Y(v))+.5;
+    g.beginPath(); g.moveTo(M.l,y); g.lineTo(w-M.r,y); g.stroke();
+    g.fillText(l, M.l-6, y);
+  }
+  const tt=timeTicks(t0, t1, Math.max(2, Math.floor(pw/86)));
+  g.textAlign='center'; g.textBaseline='top';
+  for(const t of tt.ticks){
+    const x=Math.round(X(t))+.5;
+    g.beginPath(); g.moveTo(x,M.t); g.lineTo(x,h-M.b); g.stroke();
+    g.fillText(fmtTick(t, tt.step, t1-t0), x, h-M.b+5);
+  }
+  g.save();
+  g.beginPath(); g.rect(M.l, M.t, pw, ph); g.clip();
+  g.lineWidth=1.6; g.lineJoin='round';
+  for(const pid of ch.pids){
+    if(S.hidden.has(pid)) continue;
+    const pts=seriesPath(V.data[pid]||[], t0, t1, X, Y, gapOf(pid), ch.key==='onoff'||ch.key==='state');
+    g.strokeStyle=colorOf(pid);
+    g.beginPath();
+    let pen=false, n=0;
+    for(const p of pts){
+      if(!p){ pen=false; continue; }
+      if(pen) g.lineTo(p[0],p[1]); else { g.moveTo(p[0],p[1]); pen=true; }
+      n++;
+    }
+    g.stroke();
+    if(n===1){ const p=pts.find(Boolean); g.fillStyle=colorOf(pid); g.fillRect(p[0]-2,p[1]-2,4,4); }
+  }
+  g.restore();
+  return true;
+}
+
+// The series are drawn once per change to `base`; the hover line and its readout are drawn
+// over a copy of it, so moving the pointer never redraws a series.
+function drawChart(ch, V){
+  const ctx=ch.canvas.getContext('2d'), dpr=window.devicePixelRatio||1;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,ch.canvas.width,ch.canvas.height);
+  ctx.drawImage(ch.base,0,0);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const t=S.hoverT;
+  if(t==null || !ch.X || t<ch.t0 || t>ch.t1) return;
+  const x=Math.round(ch.X(t))+.5;
+  ctx.strokeStyle=CSSV('--dim'); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x,M.t); ctx.lineTo(x,ch.h-M.b); ctx.stroke();
+  const lines=[];
+  for(const pid of ch.pids){
+    if(S.hidden.has(pid)) continue;
+    const rows=V.data[pid]||[], i=nearest(rows, t);
+    const r = i>=0 && Math.abs(rows[i][0]-t)<=gapOf(pid) ? rows[i] : null;
+    if(r && r[1]!=null){
+      ctx.fillStyle=colorOf(pid);
+      ctx.beginPath(); ctx.arc(ch.X(r[0]), ch.Y(r[1]), 3.5, 0, 2*Math.PI); ctx.fill();
+    }
+    lines.push([pid, r ? (r[1]!=null ? fmtVal(r[1], ch.key) : 'no answer') : '—']);
+  }
+  if(ch!==S.hoverChart || !lines.length) return;
+  const head=fmtClock(t, true), shown=lines.slice(0,10);
+  if(lines.length>10) shown.push([null, `+${lines.length-10} more`]);
+  ctx.font='11px '+CSSV('--ui');
+  const label=pid=>((S.meta[pid]||{}).label||String(pid));
+  const tw=Math.min(ch.w-M.l-M.r-8, Math.max(ctx.measureText(head).width,
+    ...shown.map(([pid,v])=>ctx.measureText((pid==null?'':label(pid)+'  ')+v).width+(pid==null?0:14)))+16);
+  const th=18+shown.length*15;
+  let bx=x+10; if(bx+tw>ch.w-M.r) bx=x-10-tw; if(bx<M.l) bx=M.l+2;
+  const by=M.t+4;
+  ctx.fillStyle='rgba(13,17,23,.94)'; ctx.strokeStyle=CSSV('--line-2');
+  ctx.fillRect(bx,by,tw,th); ctx.strokeRect(bx+.5,by+.5,tw-1,th-1);
+  ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=CSSV('--fg');
+  ctx.fillText(head, bx+8, by+5);
+  shown.forEach(([pid,v],i)=>{
+    const y=by+20+i*15;
+    if(pid!=null){ ctx.fillStyle=colorOf(pid); ctx.fillRect(bx+8,y+2,8,8); }
+    ctx.fillStyle=CSSV('--dim');
+    const name=pid==null?'':label(pid);
+    let txt=name, max=tw-30-ctx.measureText(v).width;
+    while(txt && ctx.measureText(txt).width>max) txt=txt.slice(0,-2);
+    if(txt!==name) txt=txt.slice(0,-1)+'…';
+    ctx.fillText(txt, bx+(pid==null?8:22), y);
+    ctx.fillStyle=CSSV('--fg'); ctx.textAlign='right';
+    ctx.fillText(v, bx+tw-8, y);
+    ctx.textAlign='left';
+  });
+}
+
+function drawAll(rebuild){
+  const V=view();
+  layoutCharts(V);
+  for(const ch of Object.values(S.charts)){
+    if(rebuild){ drawLegend(ch, V); drawBase(ch, V); }
+    drawChart(ch, V);
+  }
+  $('#csvBtn').disabled=!V.pids.length;
+}
+function hoverAt(ch, e){
+  const r=ch.canvas.getBoundingClientRect(), x=e.clientX-r.left;
+  if(!ch.X || x<M.l || x>ch.w-M.r){ clearHover(); return; }
+  S.hoverT=ch.t0+(x-M.l)/(ch.w-M.l-M.r)*(ch.t1-ch.t0);
+  S.hoverChart=ch;
+  drawAll(false);
+}
+function clearHover(){
+  if(S.hoverT==null) return;
+  S.hoverT=null; S.hoverChart=null; drawAll(false);
+}
+document.addEventListener('pointerdown', e=>{ if(e.target.tagName!=='CANVAS') clearHover(); });
+let rszT=null;
+window.addEventListener('resize', ()=>{ clearTimeout(rszT); rszT=setTimeout(()=>drawAll(true), 120); });
+
+// ── state from the server ────────────────────────────────────────────────────────────────
+function fillSelect(sel, opts, val){
+  sel.innerHTML=opts.map(([v,l])=>`<option value="${v}"${v===val?' selected':''}>${esc(l)}</option>`).join('');
+}
+function durations(){
+  const max=(S.limits ? S.limits.max_hours : 24)*60;
+  return DURATIONS.filter(([m])=>m<=max);
+}
+function rates(){ return (S.limits ? S.limits.intervals_s : [5,10,15,30,60]).map(s=>[s, fmtRate(s)]); }
+
+function applyState(st){
+  S.skew=st.now-Date.now()/1000;
+  S.now=st.now;
+  const first=!S.limits;
+  S.limits=st.limits; S.reading=st.reading; S.why=st.why;
+  S.running=st.running;
+  for(const r of st.running){
+    S.meta[r.id]={label:r.label, units:r.units, object_type:r.object_type};
+    S.live.add(r.id);
+    colorOf(r.id);
+  }
+  if(first){
+    fillSelect($('#allDur'), durations(), 15);
+    fillSelect($('#allRate'), rates(), S.limits.intervals_s[0]);
+  }
+  const off=$('#offline');
+  off.hidden=st.reading;
+  off.textContent=st.reading ? '' : 'Realtime trends need the BACnet connection, and it is not running now'
+    + (st.why ? ` (${st.why})` : '') + '. Past sessions can still be opened.';
+  const L=S.limits;
+  $('#caps').textContent=`${st.running.length} of ${L.max_points} running · ≤ ${L.max_per_controller} per controller · ≤ ${L.max_hours} h`;
+  renderRunning();
+  renderPending();
+}
+
+function renderRunning(){
+  const box=$('#running');
+  $('#stopAll').disabled=!S.running.length;
+  if(!S.running.length){
+    box.innerHTML='<div class="muted small">Nothing running. Find points, add them, and press Start.</div>';
+    return;
+  }
+  const now=S.now;
+  box.innerHTML=S.running.map(r=>{
+    const k=unitKey(r), last=r.last;
+    const val=last ? (last.q==='good' ? fmtVal(last.v!=null?last.v:NaN, k) : 'no answer') : 'reading…';
+    return `<div class="it" data-run="${r.run_id}">
+      <i class="sw" style="background:${colorOf(r.id)}"></i>
+      <span class="who"><span class="nm" title="${esc(r.name||'')}">${esc(r.label)}</span>
+        <span class="small muted">${esc(fmtRate(r.interval_s))} · ends ${esc(fmtClock(r.ends_utc))} (${esc(fmtLeft(r.ends_utc-now))} left)${r.logged?'':' · not logged'}</span></span>
+      <span class="val num ${last&&last.q!=='good'?'muted':''}">${esc(val)}</span>
+      <button data-act="more" title="Run 15 minutes longer">+15 min</button>
+      <button data-act="stop" class="danger">Stop</button></div>`;
+  }).join('');
+  box.querySelectorAll('.it').forEach(el=>{
+    const run=+el.dataset.run, r=S.running.find(x=>x.run_id===run);
+    el.querySelector('[data-act=stop]').onclick=()=>stopRuns([run]);
+    el.querySelector('[data-act=more]').onclick=async e=>{
+      const mins=Math.min(S.limits.max_hours*60, Math.ceil((r.ends_utc-nowS())/60)+15);
+      e.target.disabled=true;
+      try{ applyState(await post('/api/realtime/start', {points:[{id:r.id, minutes:mins, interval_s:r.interval_s}]})); }
+      catch(err){ showErr(err.message); }
+      e.target.disabled=false;
+    };
+  });
+}
+
+function renderPending(){
+  const box=$('#pending');
+  box.innerHTML=S.pending.map((p,i)=>`<div class="pend" data-i="${i}">
+      <span class="nm" title="${esc(p.name||'')}">${esc(p.label)}${runOf(p.id)?' <span class="tag run">running</span>':''}</span>
+      <select data-f="minutes" aria-label="How long">${durations().map(([v,l])=>`<option value="${v}"${v===p.minutes?' selected':''}>${esc(l)}</option>`).join('')}</select>
+      <select data-f="interval_s" aria-label="How often">${rates().map(([v,l])=>`<option value="${v}"${v===p.interval_s?' selected':''}>${esc(l)}</option>`).join('')}</select>
+      <button data-act="rm" title="Remove" aria-label="Remove">✕</button></div>`).join('');
+  box.querySelectorAll('.pend').forEach(el=>{
+    const p=S.pending[+el.dataset.i];
+    el.querySelectorAll('select').forEach(s=>s.onchange=()=>{ p[s.dataset.f]=+s.value; });
+    el.querySelector('[data-act=rm]').onclick=()=>{ S.pending.splice(+el.dataset.i,1); showErr(''); renderPending(); };
+  });
+  $('#startBtn').disabled=!S.pending.length || !S.reading;
+  $('#applyAll').disabled=!S.pending.length;
+  $('#startBtn').textContent=S.pending.length>1 ? `Start ${S.pending.length}` : 'Start';
+}
+
+function showErr(msg){
+  const e=$('#startErr');
+  e.hidden=!msg; e.textContent=msg||'';
+}
+
+// ── finding and starting points ──────────────────────────────────────────────────────────
+let qT=null, qN=0;
+$('#q').addEventListener('input', ()=>{ clearTimeout(qT); qT=setTimeout(search, 250); });
+$('#q').addEventListener('focus', ()=>{ if($('#q').value.trim()) search(); });
+async function search(){
+  const q=$('#q').value.trim(), n=++qN, box=$('#results');
+  if(!q){ box.hidden=true; return; }
+  let d;
+  try{ d=await j('/api/realtime/points?q='+encodeURIComponent(q)); }catch(e){ return; }
+  if(n!==qN) return;                                     // a newer search is on its way
+  box.hidden=false;
+  if(!d.points.length){ box.innerHTML='<div class="r muted small">No readable point matches.</div>'; return; }
+  box.innerHTML=d.points.map((p,i)=>`<div class="r"><span class="nm" title="${esc(p.name||'')}">${esc(p.label)}</span>
+      ${p.units?`<span class="tag">${esc(unitLabel(p.units))}</span>`:''}
+      ${p.logged?'':'<span class="tag" title="Not recorded every 2 minutes">not logged</span>'}
+      ${runOf(p.id)?'<span class="tag run">running</span>':''}
+      <button data-i="${i}">${S.pending.some(x=>x.id===p.id)?'Added':'Add'}</button></div>`).join('');
+  box.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    const p=d.points[+b.dataset.i];
+    if(!S.pending.some(x=>x.id===p.id)){
+      S.pending.push({id:p.id, label:p.label, name:p.name, minutes:+$('#allDur').value,
+                      interval_s:+$('#allRate').value});
+      S.meta[p.id]=S.meta[p.id]||{label:p.label, units:p.units, object_type:p.object_type};
+    }
+    b.textContent='Added';
+    showErr('');
+    renderPending();
+  });
+}
+$('#applyAll').onclick=()=>{
+  for(const p of S.pending){ p.minutes=+$('#allDur').value; p.interval_s=+$('#allRate').value; }
+  renderPending();
+};
+$('#startBtn').onclick=async ()=>{
+  const b=$('#startBtn');
+  b.disabled=true; showErr('');
+  try{
+    const st=await post('/api/realtime/start',
+      {points:S.pending.map(p=>({id:p.id, minutes:p.minutes, interval_s:p.interval_s}))});
+    S.pending=[]; $('#results').hidden=true; $('#q').value='';
+    applyState(st);
+    if(S.mode!=='live') backToLive();
+    await poll(); loadHistory();
+  }catch(e){ showErr(e.message); renderPending(); }
+};
+async function stopRuns(ids){
+  try{ applyState(await post('/api/realtime/stop', ids ? {run_ids:ids} : {all:true})); }
+  catch(e){ showErr(e.message); }
+  drawAll(true); loadHistory();
+}
+$('#stopAll').onclick=()=>{
+  if(confirm(`Stop all ${S.running.length} running point${S.running.length!==1?'s':''}?`)) stopRuns(null);
+};
+
+// ── live readings ────────────────────────────────────────────────────────────────────────
+async function poll(){
+  if(S.busy) return;
+  S.busy=true;
+  try{
+    const st=await j('/api/realtime');
+    applyState(st);
+    const ids=[...S.live];
+    const fresh=ids.filter(p=>!S.loaded.has(p)), known=ids.filter(p=>S.loaded.has(p));
+    if(fresh.length){
+      const starts=fresh.map(p=>(runOf(p)||{}).started_utc||st.now);
+      const t0=Math.max(Math.min(...starts), st.now-86400);
+      const d=await j(`/api/realtime/data?ids=${fresh.join(',')}&start=${t0}&end=${st.now}`);
+      merge(d, S.data);
+      fresh.forEach(p=>S.loaded.add(p));
+    }
+    if(known.length){
+      // a reading is stamped with its slot and stored a moment later: ask back a minute
+      const d=await j(`/api/realtime/data?ids=${known.join(',')}&since=${(S.since||st.now)-60}`);
+      merge(d, S.data);
+    }
+    S.since=st.now;
+    const keep=st.now-90000;
+    for(const p of Object.keys(S.data)){
+      const rows=S.data[p];
+      if(rows.length && rows[0][0]<keep) S.data[p]=rows.filter(r=>r[0]>=keep);
+    }
+    $('#status').textContent='updated '+fmtClock(st.now, true);
+    if(S.mode==='live') drawAll(true);
+  }catch(e){
+    $('#status').textContent='not updating: '+e.message;
+  }finally{ S.busy=false; }
+}
+function merge(d, store){
+  for(const [pid, m] of Object.entries(d.meta||{})) S.meta[+pid]=Object.assign(S.meta[+pid]||{}, m);
+  for(const [pid, rows] of Object.entries(d.series||{})) store[+pid]=mergeRows(store[+pid]||[], rows);
+}
+
+// ── windows, sessions, CSV ───────────────────────────────────────────────────────────────
+$('#winBtns').innerHTML=WINDOWS.map(([s,l])=>`<button data-w="${s}" class="${s===S.win?'on':''}">${l}</button>`).join('');
+$('#winBtns').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+  S.win=+b.dataset.w;
+  $('#winBtns').querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b));
+  drawAll(true);
+});
+function backToLive(){
+  S.mode='live'; S.session=null; S.sdata={}; S.spids=[];
+  $('#chartTitle').textContent='Live';
+  $('#backLive').hidden=true; $('#winBtns').hidden=false;
+  drawAll(true);
+}
+$('#backLive').onclick=backToLive;
+async function openSession(g){
+  const ids=[...new Set(g.runs.map(r=>r.point_id))];
+  for(const r of g.runs){ S.meta[r.point_id]=Object.assign(S.meta[r.point_id]||{},
+    {label:r.label, units:r.units, object_type:r.object_type}); colorOf(r.point_id); }
+  const end=g.running ? nowS() : g.ended_utc;
+  let d;
+  try{ d=await j(`/api/realtime/data?ids=${ids.join(',')}&start=${g.started_utc}&end=${end}`); }
+  catch(e){ alert('Could not open the session: '+e.message); return; }
+  S.mode='session'; S.session=g; S.sdata={}; S.spids=ids;
+  merge(d, S.sdata);
+  $('#chartTitle').textContent=`Session · ${fmtDay(g.started_utc)} ${fmtClock(g.started_utc)}`;
+  $('#backLive').hidden=false; $('#winBtns').hidden=true;
+  drawAll(true);
+  $('#chartCard').scrollIntoView({behavior:'smooth', block:'start'});
+}
+async function download(url){
+  const r=await fetch(url, {headers:authHeaders()});
+  if(r.status===401) authBar(true);
+  if(!r.ok){ alert('Export failed: '+((await r.json().catch(()=>({}))).detail||r.status)); return; }
+  const blob=await r.blob();
+  const m=(r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=m ? m[1] : 'realtime.csv';
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+$('#csvBtn').onclick=()=>{
+  if(S.mode==='session' && S.session) return download(`/api/realtime/export?group=${S.session.group_id}`);
+  const V=view();
+  if(V.pids.length) download(`/api/realtime/export?ids=${V.pids.join(',')}&start=${Math.floor(V.t0)}&end=${Math.ceil(V.t1)}`);
+};
+async function loadHistory(){
+  let d;
+  try{ d=await j('/api/realtime/history?limit=30'); }catch(e){ return; }
+  S.sessions=d.sessions;
+  const box=$('#history');
+  if(!d.sessions.length){ box.innerHTML='<div class="muted small">None yet.</div>'; return; }
+  box.innerHTML=d.sessions.map((g,i)=>{
+    const rates=[...new Set(g.runs.map(r=>r.interval_s))].sort((a,b)=>a-b).map(s=>s<60?s+' s':(s/60)+' min');
+    const why=[...new Set(g.runs.map(r=>r.stop_reason).filter(Boolean))];
+    const state=g.running ? '<span class="tag run">running</span>'
+      : why.includes('no answer') ? '<span class="tag bad">a controller stopped answering</span>'
+      : why.includes('stopped') ? '<span class="tag">stopped</span>' : '<span class="tag">finished</span>';
+    const end=g.running ? '' : ` – ${fmtClock(g.ended_utc)}`;
+    return `<div class="sess"><span class="what"><span class="num">${esc(fmtDay(g.started_utc))} ${esc(fmtClock(g.started_utc))}${esc(end)}</span>
+        · ${g.runs.length} point${g.runs.length!==1?'s':''} · every ${esc(rates.join(' / '))} ${state}
+        <div class="pts" title="${esc(g.runs.map(r=>r.label).join(', '))}">${esc(g.runs.map(r=>r.label).join(', '))}</div></span>
+      <button data-open="${i}">Chart</button><button data-csv="${g.group_id}">CSV</button></div>`;
+  }).join('');
+  box.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openSession(S.sessions[+b.dataset.open]));
+  box.querySelectorAll('[data-csv]').forEach(b=>b.onclick=()=>download(`/api/realtime/export?group=${b.dataset.csv}`));
+}
+
+poll().then(loadHistory);
+setInterval(()=>{ if(!document.hidden) poll(); }, POLL_MS);
+setInterval(()=>{ if(!document.hidden) loadHistory(); }, 30000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) poll(); });
+</script>
+</body>
+</html>

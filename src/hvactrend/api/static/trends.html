@@ -65,7 +65,7 @@
      visiting tech has no reason to open, and renaming writes display_name, which feeds the
      role classifier. The server blocks those routes too; this stops the page offering a
      control that cannot work. */
-  body.viewer-only header a[href]:not(.active) { display:none; }
+  body.viewer-only header a[href]:not(.active):not(.vo) { display:none; }
   body.viewer-only .pt .edit { display:none; }
   body.viewer-only #labelDlg { display:none !important; }
 
@@ -465,6 +465,7 @@
   <a href="/coverage">Point Coverage</a>
   <a href="/dashboard">Unit Dashboard</a>
   <a href="/trends" class="active">Trend Viewer</a>
+  <a href="/realtime" class="vo">Realtime</a>
   <a href="/reports">AI Reports</a>
   <a href="/settings">Settings</a>
   <button id="pickToggle" title="Show or hide the point list">☰ points</button>

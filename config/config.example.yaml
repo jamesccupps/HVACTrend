@@ -158,14 +158,25 @@ api:
   host: "127.0.0.1"                    # this computer only. "0.0.0.0" = other computers on
                                        # the network may open the trend viewer (read-only)
   port: 8000
-  remote_viewer_only: true             # other computers get the trend viewer and nothing else:
-                                       # no settings, no secrets, no backups, no point selection
+  remote_viewer_only: true             # other computers get the trend viewer and the Realtime
+                                       # page, and nothing else: no settings, no secrets, no
+                                       # backups, no point selection
   local_hosts: []                      # extra addresses to treat as "this computer"
   allowed_hosts: []                    # extra NAMES the pages answer to, e.g. a DNS alias the
                                        # techs type. This computer's own names and addresses
                                        # always work; any other name gets "unknown host".
   auth:
     enabled: false                     # true = changes need the UI token (Settings page)
+
+# ── Realtime trends ─────────────────────────────────────────────────────────────────────────
+# The Realtime page reads chosen points every few seconds for a set time, for testing and
+# diagnosing. Its readings are kept, apart from the 2-minute record. The caps protect the
+# controllers, which the building's own system also talks to.
+realtime:
+  max_points: 20                       # running at once, whoever started them
+  max_per_controller: 10
+  max_hours: 24                        # the longest one run
+  intervals_s: [5, 10, 15, 30, 60]     # the rates on offer
 
 # ── AI summary (optional) ───────────────────────────────────────────────────────────────────
 # A daily and weekly plain-language summary of what the alarm rules found, written by Claude

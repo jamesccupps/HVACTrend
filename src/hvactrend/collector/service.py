@@ -33,6 +33,7 @@ from ..models import PollHealth, Quality, Sample
 from ..archives import (make_offsite_copy, newest_archive_mtime,  # noqa: F401
                         newest_db_backup, offsite_name)
 from ..storage.dal import DAL
+from .realtime import Realtime
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,10 @@ class Collector:
         self._dark: dict[str, list[int]] = {}
         self._dark_cap = max(1, int(900 // max(self._interval_s, 1)))
         self._rpm_ok: set[str] = set()      # devices that answered a grouped read this run
+        # Realtime trends (collector/realtime.py): their own task, started and ended with
+        # this one, reading through _poll_device on the same stack.
+        self.realtime = Realtime(self)
+        self._realtime_task: Optional[asyncio.Task] = None
         # Who is in control of each commandable point (bacnet/priority.py): its priority
         # array, READ every priority_interval_s (2026-10-06: would it know if they had
         # something overridden?). 0 switches it off. Small batches: sixteen slots a point
@@ -181,6 +186,7 @@ class Collector:
         logger.info("Collector started (interval=%ss).", self._interval_s)
         self._last_maint = self._seed_maint_clock()
         self._last_alert_check = time.monotonic()   # first alert check after one interval
+        self._realtime_task = asyncio.create_task(self.realtime.run(), name="hvactrend-realtime")
         try:
             while not self._stop.is_set():
                 t0 = time.monotonic()
@@ -235,7 +241,8 @@ class Collector:
             # finishes and renames itself into place (verified, unpruned); only a hard kill
             # leaves a `.partial`, which the next start sweeps. _BACKUP_LOCK keeps a
             # relaunched collector from starting a second copy meanwhile. See _run_db_backup.
-            for t in (self._dbbackup_task, self._offsite_task, self._report_task):
+            for t in (self._dbbackup_task, self._offsite_task, self._report_task,
+                      self._realtime_task):
                 if t is not None and not t.done():
                     t.cancel()
             logger.info("Collector stopped.")

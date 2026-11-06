@@ -106,10 +106,22 @@ Points to ignore, rules that are not possible here, overrides held on purpose: s
 |---|---|---|
 | `host` | `127.0.0.1` | This computer only. `0.0.0.0` lets other computers open the trend viewer. |
 | `port` | `8000` | |
-| `remote_viewer_only` | `true` | Other computers get the trend viewer only: no settings, secrets, backups or point selection |
+| `remote_viewer_only` | `true` | Other computers get the trend viewer and the Realtime page only: no settings, secrets, backups or point selection |
 | `local_hosts` | `[]` | Extra addresses to treat as this computer |
 | `allowed_hosts` | `[]` | Extra names the pages answer to (a DNS alias people type). This computer's own names and addresses always work. Not settable from the Settings page |
 | `auth.enabled` | `false` | Require the UI token (Settings page) for any change |
+
+## realtime
+
+The Realtime page's caps. Its readings are kept in their own table, apart from the 2-minute
+record.
+
+| Key | Default | |
+|---|---|---|
+| `max_points` | `20` | Points running at once, whoever started them |
+| `max_per_controller` | `10` | Points running at once on one controller |
+| `max_hours` | `24` | The longest one run |
+| `intervals_s` | `[5, 10, 15, 30, 60]` | The rates on offer, in seconds |
 
 ## ai
 

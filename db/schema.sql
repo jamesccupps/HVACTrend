@@ -477,3 +477,29 @@ CREATE TABLE IF NOT EXISTS point_command_log (
     value_text  TEXT,
     PRIMARY KEY (point_id, ts_utc)
 ) WITHOUT ROWID;
+
+-- Realtime trends (api /realtime, collector/realtime.py): chosen points read every few
+-- seconds for a set time, for testing and diagnosing (the operator, 2026-11-06: "like desigo
+-- online trends"). Kept, in their own table: the alarm rules, the watchdog and the rollups
+-- go on judging the 2-minute record alone. One row per point per run; a run started again
+-- while it is running gets a new end, not a second row.
+CREATE TABLE IF NOT EXISTS fast_runs (
+    id           INTEGER PRIMARY KEY,
+    group_id     INTEGER NOT NULL,             -- the runs one Start made, together
+    point_id     INTEGER NOT NULL REFERENCES points(id) ON DELETE CASCADE,
+    interval_s   INTEGER NOT NULL,
+    started_utc  INTEGER NOT NULL,
+    ends_utc     INTEGER NOT NULL,             -- when it stops by itself
+    stopped_utc  INTEGER,                      -- NULL while it runs
+    stop_reason  TEXT                          -- finished | stopped | no answer
+);
+CREATE INDEX IF NOT EXISTS idx_fast_runs_open ON fast_runs(stopped_utc);
+CREATE INDEX IF NOT EXISTS idx_fast_runs_group ON fast_runs(group_id);
+CREATE TABLE IF NOT EXISTS fast_samples (
+    point_id   INTEGER NOT NULL REFERENCES points(id) ON DELETE CASCADE,
+    ts_utc     INTEGER NOT NULL,
+    value_num  REAL,
+    value_text TEXT,
+    quality    TEXT NOT NULL DEFAULT 'good',
+    PRIMARY KEY (point_id, ts_utc)
+) WITHOUT ROWID;

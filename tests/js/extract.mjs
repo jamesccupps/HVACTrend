@@ -25,6 +25,13 @@ export function html() {
   return readFileSync(VIEWER, 'utf8').replace(/\r/g, '');
 }
 
+/** The Realtime page (realtime.html), for tests/js/realtime.test.mjs. */
+export const REALTIME = process.env.HVACTREND_REALTIME_HTML
+  || join(HERE, '..', '..', 'src', 'hvactrend', 'api', 'static', 'realtime.html');
+export function realtimeHtml() {
+  return readFileSync(REALTIME, 'utf8').replace(/\r/g, '');
+}
+
 /** Source text of `function <name>(...){...}`, brace-balanced (not regex-terminated). */
 export function grabSource(name, src = html()) {
   const head = `function ${name}(`;
@@ -55,8 +62,7 @@ export function grabSource(name, src = html()) {
  * `env` becomes the set of globals the code closes over; the returned object exposes the
  * named functions plus the env, so a test can inspect what the code did to it.
  */
-export function compile(names, env = {}) {
-  const src = html();
+export function compile(names, env = {}, src = html()) {
   const bodies = names.map(n => grabSource(n, src)).join('\n');
   const keys = Object.keys(env);
   const factory = new Function(...keys, `${bodies}\nreturn {${names.join(',')}};`);

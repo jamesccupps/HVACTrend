@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased — fixes from an external review
+## Unreleased — realtime trends, and fixes from an external review
+
+**Realtime trends** (a new Realtime page)
+- Pick points and read them every 5, 10, 15, 30 or 60 seconds for as long as you choose, up
+  to a day. Give every point the same time and rate, or each its own: one for an hour,
+  another for 5 minutes. Stop one, add 15 minutes, or stop them all.
+- Live charts, one per kind of reading (°F, %, on/off…), sharing a time axis, with a readout
+  of every value at the pointer, or under a finger on a phone.
+- The readings are kept in their own table, apart from the 2-minute record, so the alarm
+  rules, the watchdog and the rollups are untouched. Past sessions open as charts and export
+  to CSV in the same layout as Export data.
+- Caps, in the new `realtime` section of the config: 20 points at once, 10 per controller,
+  24 hours. A controller that stops answering ends its points' runs.
+- Laid out for a phone, and open to the other computers you let in (the trend viewer's
+  remote access), which can start and stop them.
+- Any point with a value can be watched, logged or not, through the same read-only stack.
 
 **Security**
 - The pages answer only to this computer's own names and addresses, plus any in the new

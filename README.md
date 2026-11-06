@@ -37,6 +37,14 @@ there around the clock. It is written to work in any building with BACnet/IP.
   - X-Y scatter, outdoor weather overlay, occupied-hours shading.
   - Operator notes on the timeline, saved views, and export to CSV.
   - Works on a phone.
+- **Realtime trends, for testing and diagnosing.** Pick points and read them every 5 seconds
+  (or 10, 15, 30, 60) for as long as you choose, each point for its own time if you like:
+  watch a valve while it is stroked, or a discharge temperature settle after a change.
+  - Live charts grouped by unit, with a readout of every value under the pointer or a finger.
+  - Stop one point or all of them. Caps on how many run at once protect the controllers.
+  - The readings are kept, apart from the 2-minute record. Past sessions open as charts and
+    export to CSV.
+  - Built for a phone, and open to the other computers you let in.
 - **A unit dashboard.** Every air handler and plant system on one screen, with the readings
   that matter, outliers highlighted, and who has overridden what.
 - **Overrides, seen.** It reads (never writes) each commandable point's priority array, so you
@@ -71,8 +79,8 @@ there around the clock. It is written to work in any building with BACnet/IP.
   - None of this can be switched on from the web pages.
 - **The web pages are local by default.**
   - Out of the box only the computer it runs on can open them.
-  - When you let others in, they get the trend viewer and nothing else: no settings, no
-    secrets, no backups.
+  - When you let others in, they get the trend viewer and the Realtime page, and nothing
+    else: no settings, no secrets, no backups.
 - **Secrets stay out of files you share.** API keys and the notification topic are entered
   on the Settings page and kept in a separate file that is never committed or backed up.
 
