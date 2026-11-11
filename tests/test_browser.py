@@ -352,10 +352,10 @@ def test_delta_lines_refuse_a_meaningless_subtraction():
     meaningless one — and it would plot perfectly happily. Refused, not warned."""
     js = _trends_js()
     assert "if(ua !== ub) return" in js, "unit mismatch must be refused"
-    assert "DELTA_TOL_S" in js, "pairing needs an explicit tolerance"
-    # the collector staggers devices by 5 s, so exact-timestamp matching is not enough,
-    # and a tolerance wide enough to pair the wrong poll cycle would invent a difference
-    assert "const DELTA_TOL_S = 60" in js
+    assert "deltaTolS()" in js, "pairing needs an explicit tolerance"
+    # half a poll, from the poll rate: a tolerance wide enough to pair the wrong poll cycle
+    # would invent a difference (a fixed 60 s did, once the poll went to 1 minute)
+    assert "function deltaTolS(){ return (+state.pollS || 120) / 2; }" in js
 
 
 def test_delta_legend_handler_survives_a_string_id():

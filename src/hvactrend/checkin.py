@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from . import coverage
+from . import coverage, pollrate
 from .bacnet import priority
 from .notify import incident_name
 from .archives import (newest_archive_mtime, newest_db_backup, newest_offsite_copy,
@@ -125,9 +125,16 @@ def build(dal: Any, config: Any, now_utc: int, *, dests: Optional[list] = None) 
 
     # ── yesterday's polling ─────────────────────────────────────────────────────────
     def polling() -> None:
-        interval = float(_get(config, "bacnet", "poll", "interval_s", default=120) or 120)
-        expected = max(1, int(round((t1 - t0) / interval)))
-        devs = dal.poll_health_between(t0, t1)
+        interval = pollrate.interval(config)
+        # A day the poll rate changed is counted from the change: at the new rate the hours
+        # before it look short on every controller (say, going from 2 minutes to 1).
+        c0 = pollrate.counted_from(dal, t0, t1)
+        if c0 > t0:
+            facts.append(("Poll rate", f"every {pollrate.label(interval)} since "
+                                       f"{time.strftime('%H:%M', time.localtime(c0))}; "
+                                       "cycles counted from then"))
+        expected = max(1, int(round((t1 - c0) / interval)))
+        devs = dal.poll_health_between(c0, t1)
         if not devs:
             attention.append("No poll cycles at all were recorded yesterday.")
             facts.append(("Poll cycles", f"0 of {expected:,}"))
@@ -135,7 +142,7 @@ def build(dal: Any, config: Any, now_utc: int, *, dests: Optional[list] = None) 
         def owed(d: dict) -> int:
             # A controller added yesterday owes cycles only from its first poll: the boiler
             # panel, added at 15:38 on 09-29, was reported as "251 of 720" the next morning.
-            start = max(t0, int(d.get("first_poll_utc") or t0))
+            start = max(c0, int(d.get("first_poll_utc") or c0))
             return max(1, int(round((t1 - start) / interval)))
         short = [d for d in devs if d["cycles"] < _MIN_CYCLE_SHARE * owed(d)]
         for d in short:

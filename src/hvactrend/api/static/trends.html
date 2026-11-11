@@ -651,7 +651,7 @@
           </div>
           <div class="mrow"><span class="mnote">CSV carries every plotted series and every Δ line, with the BACnet name in each header.</span></div>
           <div class="mhdr">Export data</div>
-          <div class="mrow"><button id="xOpen" title="Any points, any days: every 2-minute reading, or averages">⭳ Export data…</button></div>
+          <div class="mrow"><button id="xOpen" title="Any points, any days: every reading, or averages">⭳ Export data…</button></div>
           <div class="mrow"><span class="mnote">Whole units or the points on the chart, any dates, as one CSV or a file per day, and the weather. No 64-point limit.</span></div>
         </div>
       </div>
@@ -708,7 +708,7 @@
     <div class="two">
       <label>Resolution
         <select id="xRes">
-          <option value="raw">every reading (2 minutes)</option>
+          <option value="raw">every reading</option>
           <option value="5m">5-minute averages</option>
           <option value="1h">hourly averages</option>
         </select></label>
@@ -780,6 +780,7 @@ const WCH = {
 const state = {
   logged: [], sel: [], color: {}, hidden: new Set(), series: {},
   start: 0, end: 0, extent: {min_ts:null, max_ts:null, n:0}, rollup: 'raw', hoverX: null,
+  pollS: 120,                         // seconds between raw readings (/api/logged poll_s)
   hoverId: null, _py: {},          // which line the cursor is on + per-series y-scales
   pickerMode: 'unit',                 // 'unit' | 'metric'
   // Which picker groups are expanded. This HAS to live in state: renderPicker() rebuilds
@@ -920,6 +921,7 @@ async function loadLogged(opts){
   const d = await j('/api/logged');
   state.logged = d.points;
   state.extent = d.extent;
+  if(+d.poll_s > 0){ state.pollS = +d.poll_s; syncPollText(); }
   // Archived points are NOT "logged points" and must not be counted as if they
   // were: the header would have quietly grown by 389 overnight and claimed more
   // coverage of the building than actually exists. `with data` counts only the
@@ -1519,11 +1521,30 @@ async function loadSeries(){
   draw();
 }
 
+// ── the poll rate ─────────────────────────────────────────────────────────────
+// Raw readings are one poll apart (2 minutes by default, often 1). The
+// rate comes from /api/logged (bacnet.poll.interval_s), so every place that names it or
+// sizes something by it follows a change instead of quoting the old one.
+function pollLabel(){
+  const s = +state.pollS || 120;
+  return (s >= 60 && s % 60 === 0) ? `${s/60}-min` : `${s}-s`;
+}
+function resName(r){
+  return {raw: pollLabel()+' polls', '5m':'5-min avg', '1h':'hourly avg'}[r||'raw'] || String(r);
+}
+function syncPollText(){
+  const o = document.querySelector('#xRes option[value="raw"]');
+  if(o) o.textContent = `every reading (${pollLabel()})`;
+  const b = $('#xOpen');
+  if(b) b.title = `Any points, any days: every ${pollLabel()} reading, or averages`;
+}
+
 // ── Δ lines: A - B as its own series ─────────────────────────────────────────
-// Half a poll interval. Points on the SAME controller share a timestamp exactly, but the
-// collector staggers devices by 5 s, so a delta spanning two panels needs a tolerance --
-// and a tolerance wide enough to pair the wrong cycle would silently invent a difference.
-const DELTA_TOL_S = 60;
+// Half a poll interval. Every reading of a poll cycle carries the cycle's one timestamp, so
+// pairs normally match exactly; the tolerance only has to stay under half a poll, because
+// one wide enough to pair the NEXT cycle would silently invent a difference. At 1 minute
+// the old fixed 60 s did exactly that wherever one side missed a cycle.
+function deltaTolS(){ return (+state.pollS || 120) / 2; }
 
 function deltaId(a, b){ return 'd:' + a + '-' + b; }
 function isDelta(id){ return typeof id === 'string' && id.startsWith('d:'); }
@@ -1577,16 +1598,16 @@ function statsFor(samples){
 }
 
 // Walk A and B together (both time-sorted) pairing each A sample with the nearest B within
-// DELTA_TOL_S. Where either side is missing or not 'good' the delta emits a NULL rather
+// deltaTolS(). Where either side is missing or not 'good' the delta emits a NULL rather
 // than a value, so the line BREAKS across an outage instead of drawing a confident
 // straight segment over it — the same discipline the fleet band follows.
 function computeDelta(A, B){
-  const bs = B.samples, out = [];
+  const bs = B.samples, out = [], tol = deltaTolS();
   let j = 0;
   for(const p of A.samples){
     while(j+1 < bs.length && Math.abs(bs[j+1].t - p.t) <= Math.abs(bs[j].t - p.t)) j++;
     const q = bs[j];
-    const ok = q && Math.abs(q.t - p.t) <= DELTA_TOL_S && usable(p) && usable(q);
+    const ok = q && Math.abs(q.t - p.t) <= tol && usable(p) && usable(q);
     out.push({t: p.t, v: ok ? p.v - q.v : null});
   }
   return out;
@@ -3549,7 +3570,7 @@ function updateRangeLabel(){
   const f=t=>new Date(t*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
   // show the resolution: on a long window you are looking at 5-minute or hourly buckets,
   // not raw polls, and short spikes will have been averaged away
-  const res = {raw:'2-min polls', '5m':'5-min avg', '1h':'hourly avg'}[state.rollup] || state.rollup;
+  const res = resName(state.rollup);
   $('#rnglabel').textContent = `${f(state.start)}  →  ${f(state.end)}   ·   ${res}`
     + (state.xManual ? '   ·   X pinned' : '');
   // Safe to hook here — and it is the one chokepoint every window writer already passes
@@ -3609,8 +3630,7 @@ function exportCSV(){
   // stopped there. A spreadsheet that leaves the building has to say what it is.
   // 2026-09-22 audit, M-4.
   const roll = (state.rollup && state.rollup !== 'raw') ? state.rollup : null;
-  const resLabel = {raw:'2-min polls', '5m':'5-min avg', '1h':'hourly avg'}[state.rollup||'raw']
-                   || String(state.rollup);
+  const resLabel = resName(state.rollup);
   // A Δ line is computed from matched pairs and has no bucket of its own, so it keeps the
   // single-value shape even in a rollup window.
   const isRoll = id => !!roll && !isDelta(id);
@@ -3653,7 +3673,8 @@ function exportPNG(){ cv.toBlob(b=> b && dl(b, `hvactrend_trends_${stamp()}.png`
 // The CSV button exports what is on the chart, and a chart holds 64 points and shows every
 // 2-minute reading only for 2 days or less. The operator wanted the 84 tower and pump points at
 // 2 minutes for every day of October (2026-10-20), which took 40 exports that way.
-const X_STEP = {raw:120, '5m':300, '1h':3600};
+// Raw is one reading per poll (state.pollS), the same step export.estimate_cells uses.
+function xStep(res){ return res === 'raw' ? (+state.pollS || 120) : ({'5m':300, '1h':3600}[res] || 300); }
 const X_MAX_CELLS = 30e6;                  // export.MAX_CELLS
 function xIso(t){ const d=new Date(t*1000);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -3714,7 +3735,7 @@ function xUpdate(){
   if(!ids.length){ go.disabled = false;
     hint.textContent = `One weather file: ${days * 24} hourly rows.`;
     return; }
-  const cells = ids.length * (w[1]-w[0]) / X_STEP[res];
+  const cells = ids.length * (w[1]-w[0]) / xStep(res);
   if(cells > X_MAX_CELLS){ go.disabled = true; hint.className = 'hint bad';
     hint.textContent = `About ${Math.round(cells/1e6)} million readings: over the 30 million limit. `
                      + 'Fewer days or points, or averages.';
@@ -3731,7 +3752,7 @@ async function doExport(){
   if((!ids.length && !wx) || !w) return;
   const go=$('#xGo'), hint=$('#xHint');
   go.disabled = true; hint.className = 'hint';
-  hint.textContent = 'Writing the file… a month of 2-minute readings on many points takes a minute or two.';
+  hint.textContent = 'Writing the file… a month of every reading on many points takes a minute or two.';
   try{
     const r = await fetch('/api/export', {method:'POST',
       headers: Object.assign({'Content-Type':'application/json'}, authHeaders()),

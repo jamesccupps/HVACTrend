@@ -658,7 +658,7 @@ async function search(){
   if(!d.points.length){ box.innerHTML='<div class="r muted small">No readable point matches.</div>'; return; }
   box.innerHTML=d.points.map((p,i)=>`<div class="r"><span class="nm" title="${esc(p.name||'')}">${esc(p.label)}</span>
       ${p.units?`<span class="tag">${esc(unitLabel(p.units))}</span>`:''}
-      ${p.logged?'':'<span class="tag" title="Not recorded every 2 minutes">not logged</span>'}
+      ${p.logged?'':'<span class="tag" title="Not in the regular record">not logged</span>'}
       ${runOf(p.id)?'<span class="tag run">running</span>':''}
       <button data-i="${i}">${S.pending.some(x=>x.id===p.id)?'Added':'Add'}</button></div>`).join('');
   box.querySelectorAll('button').forEach(b=>b.onclick=()=>{

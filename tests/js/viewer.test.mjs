@@ -150,7 +150,7 @@ test('F-07 · export carries value AND quality, plus local time', () => {
     Blob: class { constructor(parts) { this.text = parts.join(''); } },
     dl: (blob, name) => { captured = { text: blob.text, name }; },
   };
-  const { exportCSV } = compile(['exportCSV'], env);
+  const { exportCSV } = compile(['exportCSV', 'resName', 'pollLabel'], env);
   exportCSV();
   assert.ok(captured, 'exportCSV produced nothing');
   const [hdr, r1, r2] = captured.text.split('\n');
@@ -185,7 +185,7 @@ function exportEnv(samples, rollup) {
     Blob: class { constructor(parts) { this.text = parts.join(''); } },
     dl: (blob, name) => { captured = { text: blob.text, name }; },
   };
-  const { exportCSV } = compile(['exportCSV'], env);
+  const { exportCSV } = compile(['exportCSV', 'resName', 'pollLabel'], env);
   exportCSV();
   return captured;
 }
@@ -615,4 +615,34 @@ test('a saved view cannot put markup into the page', () => {
   assert.equal(state.todTo, 17);
   assert.deepEqual(state.deltas, [{ a: 1, b: 2 }]);
   assert.equal(state.compareOffset, 604800);
+});
+
+// -- a poll every minute (2026-11-11) ------------------------------------------------------
+// The delta tolerance was a fixed 60 s: "half a poll" at 2 minutes. At 1 minute it reached
+// the NEXT cycle, so where one side missed a reading the line showed A minus B's following
+// reading as if they were taken together.
+
+test('1-minute poll - a delta never pairs a reading with the next cycle', () => {
+  const state = { pollS: 60 };
+  const { computeDelta } = compile(['computeDelta', 'deltaTolS', 'usable'], { state });
+  const G = (t, v) => ({ t, v, q: 'good' });
+  // B missed the 60 s cycle; its nearest reading is the next one, stamped 59 s later
+  const out = computeDelta({ samples: [G(0, 10), G(60, 11)] },
+                           { samples: [G(0, 4), G(119, 5)] });
+  assert.deepEqual(out.map(p => p.v), [6, null]);
+  state.pollS = 120;                       // at 2 minutes the same 59 s is inside one cycle
+  assert.deepEqual(computeDelta({ samples: [G(60, 11)] }, { samples: [G(119, 5)] })
+    .map(p => p.v), [6]);
+});
+
+test('1-minute poll - the resolution is named from the rate', () => {
+  const state = { pollS: 60 };
+  const { resName, xStep } = compile(['resName', 'pollLabel', 'xStep'], { state });
+  assert.equal(resName('raw'), '1-min polls');
+  assert.equal(resName(null), '1-min polls');
+  assert.equal(resName('5m'), '5-min avg');
+  assert.equal(xStep('raw'), 60);
+  assert.equal(xStep('1h'), 3600);
+  state.pollS = 120;
+  assert.equal(resName('raw'), '2-min polls');
 });

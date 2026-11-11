@@ -39,13 +39,34 @@ import zipfile
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+from . import pollrate
+
+# "raw" is every poll, so its step, label and file-name tag follow bacnet.poll.interval_s
+# (passed in as poll_s), which is 2 minutes by default and often 1. The keys are also the
+# resolutions an export may ask for.
 STEP_S = {"raw": 120, "5m": 300, "1h": 3600}
 RES_LABEL = {"raw": "2-min polls", "5m": "5-min avg", "1h": "hourly avg"}
 RES_FILE = {"raw": "2min", "5m": "5min", "1h": "hourly"}
+
+
+def step_s(res: str, poll_s: float = 120) -> float:
+    return float(poll_s) if res == "raw" else STEP_S[res]
+
+
+def res_label(res: str, poll_s: float = 120) -> str:
+    return f"{pollrate.label(poll_s)} polls" if res == "raw" else RES_LABEL[res]
+
+
+def res_file(res: str, poll_s: float = 120) -> str:
+    return pollrate.label(poll_s).replace("-", "") if res == "raw" else RES_FILE[res]
+
+
 # Points x rows. A month of 2-minute readings on 1,400 points, or a year of hourly averages
 # on 3,400: about 0.5 GB of CSV, which is where a spreadsheet stops being the right tool.
 MAX_CELLS = 30_000_000
-_CYCLE_TOL_S = 60          # half a poll: the readings of one cycle, staggered by controller
+# Every reading of a poll cycle carries the cycle's one timestamp, so readings more than half
+# a poll apart are different cycles. Half of the CURRENT poll: at 1 minute, the 2-minute
+# tolerance of 60 s would put two cycles in one row whenever they fell exactly 60 s apart.
 # the building's outdoor-air sensors, by name or label; dampers named "OA" are not weather
 # "Outdoor ...", a role-style OA_TEMP, or a bare OAT / OAH token (BLDG.OAT, OAT-1): the common
 # ways a BAS names its outdoor temperature and humidity. A damper is excluded by the caller.
@@ -74,8 +95,8 @@ def local_days(start: int, end: int) -> list[tuple[int, int, str]]:
     return out
 
 
-def estimate_cells(n_points: int, start: int, end: int, res: str) -> int:
-    return int(n_points * max(0, end - start) / STEP_S[res])
+def estimate_cells(n_points: int, start: int, end: int, res: str, poll_s: float = 120) -> int:
+    return int(n_points * max(0, end - start) / step_s(res, poll_s))
 
 
 def _label(m: dict) -> str:
@@ -94,9 +115,9 @@ def header(metas: list[dict], res: str) -> list[str]:
     return hdr
 
 
-def _stamp(t: int, res: str) -> list:
+def _stamp(t: int, res: str, poll_s: float = 120) -> list:
     return [datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), t,
-            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t)), RES_LABEL[res]]
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t)), res_label(res, poll_s)]
 
 
 def _blank(v: Any) -> Any:
@@ -123,9 +144,11 @@ class _SafeWriter:
         return self._w.writerow([_cell(c) for c in row])
 
 
-def day_rows(dal: Any, metas: list[dict], t0: int, t1: int, res: str) -> Iterator[list]:
+def day_rows(dal: Any, metas: list[dict], t0: int, t1: int, res: str,
+             poll_s: float = 120) -> Iterator[list]:
     """The rows of [t0, t1) for these points, in time order."""
     if res == "raw":
+        tol = float(poll_s) / 2
         hits = []
         for i, m in enumerate(metas):
             for r in dal.query_series(m["id"], t0, t1 - 1):
@@ -136,13 +159,13 @@ def day_rows(dal: Any, metas: list[dict], t0: int, t1: int, res: str) -> Iterato
         for t, i, v, q in hits:
             # a new cycle: past half a poll from the cycle's first reading, or this point
             # already has its reading in the cycle (two cycles closer together than usual)
-            if row_t is None or t - row_t > _CYCLE_TOL_S or i in got:
+            if row_t is None or t - row_t > tol or i in got:
                 if row_t is not None:
-                    yield _raw_row(row_t, got, len(metas))
+                    yield _raw_row(row_t, got, len(metas), poll_s)
                 row_t, got = t, {}
             got[i] = (v, q)
         if row_t is not None:
-            yield _raw_row(row_t, got, len(metas))
+            yield _raw_row(row_t, got, len(metas), poll_s)
         return
     step = STEP_S[res]
     by_t: dict = {}
@@ -160,8 +183,8 @@ def day_rows(dal: Any, metas: list[dict], t0: int, t1: int, res: str) -> Iterato
         yield line
 
 
-def _raw_row(t: int, got: dict, n: int) -> list:
-    line = _stamp(t, "raw")
+def _raw_row(t: int, got: dict, n: int, poll_s: float = 120) -> list:
+    line = _stamp(t, "raw", poll_s)
     for i in range(n):
         v, q = got.get(i, (None, None))
         line += [_blank(v), q or ""]
@@ -255,7 +278,7 @@ def _write_weather(f: Any, dal: Any, start: int, end: int) -> int:
 
 
 def write_export(db_path: str, ids: list[int], start: int, end: int, res: str, layout: str,
-                 out_path: str, *, weather: bool = False) -> dict:
+                 out_path: str, *, weather: bool = False, poll_s: float = 120) -> dict:
     """Write the export to `out_path`: a CSV (layout 'one') or a zip of a CSV per local day
     (layout 'day'). With `weather`, the weather file goes in too: on its own it is the CSV;
     with points the download is a zip whatever the layout, since a CSV holds one table.
@@ -270,7 +293,8 @@ def write_export(db_path: str, ids: list[int], start: int, end: int, res: str, l
         days = local_days(start, end)
         first, last = (days[0][2], days[-1][2]) if days else ("", "")
         span = first if first == last else f"{first}_to_{last}"
-        base = f"hvactrend_export_{span}_{RES_FILE[res]}"
+        tag = res_file(res, poll_s)
+        base = f"hvactrend_export_{span}_{tag}"
         weather_name = f"hvactrend_weather_{span}_hourly.csv"
         rows = hours = 0
         as_zip = bool(metas) and (layout == "day" or weather)
@@ -281,7 +305,7 @@ def write_export(db_path: str, ids: list[int], start: int, end: int, res: str, l
             filename = weather_name
         elif as_zip:
             with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                groups = ([(f"hvactrend_{name}_{RES_FILE[res]}.csv", [(t0, t1)])
+                groups = ([(f"hvactrend_{name}_{tag}.csv", [(t0, t1)])
                            for t0, t1, name in days] if layout == "day" else
                           [(base + ".csv", [(t0, t1) for t0, t1, _ in days])])
                 for name, spans in groups:
@@ -290,7 +314,7 @@ def write_export(db_path: str, ids: list[int], start: int, end: int, res: str, l
                             w = _SafeWriter(f)
                             w.writerow(header(metas, res))
                             for t0, t1 in spans:
-                                for line in day_rows(dal, metas, t0, t1, res):
+                                for line in day_rows(dal, metas, t0, t1, res, poll_s):
                                     w.writerow(line)
                                     rows += 1
                 if weather:
@@ -303,7 +327,7 @@ def write_export(db_path: str, ids: list[int], start: int, end: int, res: str, l
                 w = _SafeWriter(f)
                 w.writerow(header(metas, res))
                 for t0, t1, _ in days:
-                    for line in day_rows(dal, metas, t0, t1, res):
+                    for line in day_rows(dal, metas, t0, t1, res, poll_s):
                         w.writerow(line)
                         rows += 1
             filename = base + ".csv"

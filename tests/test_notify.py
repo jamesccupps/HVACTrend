@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from hvactrend import archives, checkin, notify
+from hvactrend import archives, checkin, notify, pollrate
 from hvactrend.models import Alert, Quality, Sample
 from hvactrend.storage.sqlite_dal import SQLiteDAL
 
@@ -374,6 +374,32 @@ def test_a_controller_added_yesterday_is_judged_from_its_first_poll(tmp_path):
                     "VALUES (2, ?, 1, 1, 1)", (t0 - 3600,))          # it existed the day before
     s = checkin.build(d, cfg, now, dests=dests)
     assert any(a.startswith("SC-2+:") and "poll cycles" in a for a in s["attention"])
+
+
+def test_the_day_the_poll_rate_changed_is_counted_from_the_change(tmp_path):
+    """A site that goes from every 2 minutes to every minute in the afternoon: judged at the
+    new rate, the hours before the change hold half the cycles they "owe", and the next
+    morning's check-in would call every controller short: a priority-4 push for nothing."""
+    now = _local(2026, 9, 29, 7, 2)
+    d, cfg, dests, n = _world(tmp_path, now=now)
+    t0, t1 = checkin.yesterday(now)
+    since = t0 + 15 * 3600 + 1800
+    c = d._conn
+    c.execute("DELETE FROM poll_health WHERE ts_utc >= ?", (since,))
+    c.executemany("INSERT INTO poll_health(device_id,ts_utc,ok,reads_attempted,reads_ok) "
+                  "VALUES (?,?,1,1,1)", [(dev, ts) for dev in (1, 2)
+                                         for ts in range(since, t1, 60)])
+    cfg["bacnet"]["poll"]["interval_s"] = 60
+    s = checkin.build(d, cfg, now, dests=dests)
+    assert any("poll cycles" in a for a in s["attention"]), "the false alarm, without the note"
+    pollrate.note(d, 120, t0 - 86400)
+    pollrate.note(d, 60, since)
+    s = checkin.build(d, cfg, now, dests=dests)
+    facts = dict(s["facts"])
+    assert s["attention"] == [], s["attention"]
+    m = (t1 - since) // 60
+    assert facts["Poll cycles"] == f"{m} of {m} on all 2 controllers"
+    assert facts["Poll rate"] == "every 1-min since 15:30; cycles counted from then"
 
 
 def test_a_bad_day_names_each_problem(tmp_path):

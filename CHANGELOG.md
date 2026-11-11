@@ -17,6 +17,17 @@
   remote access), which can start and stop them.
 - Any point with a value can be watched, logged or not, through the same read-only stack.
 
+**Polling every minute**
+- `bacnet.poll.interval_s: 60` now works throughout. The export's cycle grouping, label and
+  file name, the trend viewer's Δ lines, resolution label and export estimate, the chart's
+  row budget and schedule detection all assumed readings 2 minutes apart; they read the
+  interval now. At 1 minute the export put two cycles on one row, and a Δ line could pair a
+  reading with the next cycle's.
+- The collector notes when the interval changes. The morning check-in and the summary count
+  that day's poll cycles from the change, instead of calling every controller short.
+- A reading a minute doubles the raw rows (about 70 MB a day per 1,000 points), so halve
+  `storage.retention.raw_days` to keep the same disk.
+
 **From your phone, anywhere**
 - `api.local_hosts` may name a network as well as an address. On a Tailscale tailnet where
   every device is yours, `["100.64.0.0/10", "fd7a:115c:a1e0::/48"]` gives your phone every

@@ -39,6 +39,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     from fastapi import Body, FastAPI, Header, HTTPException
     from fastapi.responses import HTMLResponse
 
+    from .. import pollrate as _pollrate
     from ..bacnet import priority as _priority
     from ..bacnet.application import close_application, get_application
     from ..bacnet.discovery import DiscoveredDevice, enumerate_device
@@ -507,6 +508,10 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             if node is None:
                 return default
         return node
+
+    def _poll_s() -> float:
+        """bacnet.poll.interval_s: how far apart the raw readings are (pollrate.py)."""
+        return _pollrate.interval(getattr(app.state, "config", None))
 
     def _require_auth(authorization: str = "", x_auth_token: str = "") -> None:
         """Gate sensitive mutations. When api.auth.enabled, require a bearer token that
@@ -1315,13 +1320,15 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     async def logged_points() -> dict[str, Any]:
         """Point-picker source for the viewer: enabled points + per-point sample
         count / last-seen, plus the overall sample time-extent. A point under an override
-        carries it (bacnet/priority.py), so the viewer can mark it."""
+        carries it (bacnet/priority.py), so the viewer can mark it. `poll_s` is the poll
+        rate, which names the "every reading" resolution and sizes its exports."""
         pts = app.state.dal.logged_points()
         over = {o["point_id"]: o for o in _overrides()}
         for p in pts:
             if p["id"] in over:
                 p["override"] = over[p["id"]]
-        return {"points": pts, "extent": app.state.dal.samples_time_extent()}
+        return {"points": pts, "extent": app.state.dal.samples_time_extent(),
+                "poll_s": _poll_s()}
 
     @app.get("/api/extent")
     async def samples_extent_only() -> dict[str, Any]:
@@ -1355,7 +1362,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             start, end = end, start
         out = await asyncio.to_thread(
             _series_payload, str(app.state.dal.db_path), [point_id], _ts(start), _ts(end),
-            _valid_rollup(rollup), _cfg("bacnet", "poll", "interval_s", default=120))
+            _valid_rollup(rollup), _poll_s())
         if not out["series"]:
             raise HTTPException(status_code=404, detail="unknown point")
         s = out["series"][0]
@@ -1394,8 +1401,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             start, end = end, start
         out = await asyncio.to_thread(
             _series_payload, str(app.state.dal.db_path), ids, _ts(start), _ts(end),
-            _valid_rollup(payload.get("rollup")),
-            _cfg("bacnet", "poll", "interval_s", default=120))
+            _valid_rollup(payload.get("rollup")), _poll_s())
         return dict(out, dropped=dropped)
 
     @app.post("/api/export")
@@ -1432,7 +1438,8 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         if (not ids and not weather) or end <= start:
             raise HTTPException(status_code=400,
                                 detail="pick at least one point (or the weather) and one day")
-        cells = _export.estimate_cells(len(ids), start, end, res)
+        poll_s = _poll_s()
+        cells = _export.estimate_cells(len(ids), start, end, res, poll_s)
         if cells > _export.MAX_CELLS:
             raise HTTPException(status_code=413, detail=(
                 f"That is about {cells / 1e6:.0f} million readings ({len(ids)} points); the "
@@ -1453,7 +1460,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             try:
                 info = await asyncio.to_thread(_export.write_export, str(app.state.dal.db_path),
                                                ids, start, end, res, layout, tmp,
-                                               weather=weather)
+                                               weather=weather, poll_s=poll_s)
             except Exception:
                 os.unlink(tmp)
                 raise
@@ -1915,7 +1922,7 @@ def _setup_logging(config: Any) -> None:
 _SERIES_MAX_IDS = 64
 _EXPORT_LOCK = asyncio.Lock()      # one bulk export at a time (export.py)
 _SERIES_ROW_BUDGET = 400_000
-_ROLLUP_STEP_S = {None: 120, "5m": 300, "1h": 3600}
+_ROLLUP_STEP_S = {"5m": 300, "1h": 3600}     # raw: the poll interval (_bounded_rollup)
 
 
 # Epoch seconds outside this are not a time anyone means, and past 2**63 SQLite overflows:
@@ -1948,10 +1955,10 @@ def _series_payload(db_path: str, ids: list, start: int, end: int,
         if ext.get("min_ts") is not None:
             start = max(start, int(ext["min_ts"]) - 86400)
             end = min(end, int(ext["max_ts"]) + 86400)
-        # ROW BUDGET. Raw is 2-minute data: a 90-day window on 20 points is ~1.3 M rows.
-        # Rather than refuse, serve the same window at a resolution that fits -- which is
-        # what the viewer would have asked for anyway.
-        roll = _bounded_rollup(roll, len(ids), end - start)
+        # ROW BUDGET. Raw is a reading every poll (bacnet.poll.interval_s): a 90-day window
+        # on 20 points is ~1.3 M rows at 2 minutes, ~2.6 M at 1. Rather than refuse, serve the same
+        # window at a resolution that fits -- which is what the viewer would have asked for.
+        roll = _bounded_rollup(roll, len(ids), end - start, poll_s)
         series = []
         for pid in ids:
             meta = dal.point_meta(pid)
@@ -1979,17 +1986,22 @@ def _schedule_detect_ro(db_path: str, config: Any, days: int) -> dict:
         dal.close()
 
 
-def _bounded_rollup(rollup: Optional[str], n_ids: int, span_s: int) -> Optional[str]:
+def _bounded_rollup(rollup: Optional[str], n_ids: int, span_s: int,
+                    poll_s: Any = 120) -> Optional[str]:
     """Coarsen the resolution until the request fits the row budget.
 
     Serving a coarser window beats refusing: the viewer already falls back to rollups for
     wide windows, so this only bites a request the UI would not have made -- and it bites
-    it by answering, not by erroring. Returns the rollup to actually use.
+    it by answering, not by erroring. Returns the rollup to actually use. Raw rows are
+    `poll_s` apart (bacnet.poll.interval_s), so a minute's poll fills the budget twice as
+    fast as two minutes'.
     """
     n_ids = max(1, n_ids)
     span_s = max(0, span_s)
+    steps = dict(_ROLLUP_STEP_S, **{"raw": float(poll_s or 120)})
+    steps[None] = steps["raw"]
     for candidate in (rollup, "5m", "1h"):
-        step = _ROLLUP_STEP_S.get(candidate if candidate != "raw" else None)
+        step = steps.get(candidate)
         if step is None:
             continue
         if n_ids * (span_s / step) <= _SERIES_ROW_BUDGET:

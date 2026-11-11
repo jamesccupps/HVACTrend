@@ -138,7 +138,8 @@ The full walkthrough is [docs/getting-started.md](docs/getting-started.md).
   records only while it is running.
 - **Python 3.11 or newer.**
 - **Controllers reachable over BACnet/IP.** MS/TP controllers behind a BACnet router are fine.
-- **Disk:** about 35 MB a day per 1,000 logged points, at the default 2-minute interval.
+- **Disk:** about 35 MB a day per 1,000 logged points, at the default 2-minute interval
+  (about 70 MB at 1 minute).
 
 ## Status
 

@@ -24,6 +24,7 @@ import time
 from collections import defaultdict
 from typing import Any, Optional
 
+from .. import pollrate
 from ..bacnet import priority
 from ..bacnet.application import ReadOnlyBACnetApplication
 from ..bacnet.discovery import _is_error, _no_response, _present_value
@@ -184,6 +185,14 @@ class Collector:
         """Main loop. Robust: one failed cycle never kills the collector. Cancels
         cleanly on stop() or task cancellation."""
         logger.info("Collector started (interval=%ss).", self._interval_s)
+        try:
+            # the check-in and the summary count a changed day's cycles from here (pollrate.py)
+            prev = pollrate.note(self._dal, self._interval_s, int(time.time()))
+            if prev is not None:
+                logger.info("Poll rate changed from every %gs to every %gs.", prev,
+                            self._interval_s)
+        except Exception:  # noqa: BLE001 -- a note about the rate must never stop collection
+            logger.exception("could not record the poll rate")
         self._last_maint = self._seed_maint_clock()
         self._last_alert_check = time.monotonic()   # first alert check after one interval
         self._realtime_task = asyncio.create_task(self.realtime.run(), name="hvactrend-realtime")

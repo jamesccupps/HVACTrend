@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from .. import coverage
+from .. import coverage, pollrate
 from ..bacnet import priority
 from ..rules import catalog, state
 from ..rules.evaluate import _GATE_LOOKBACK_S, _air_gate, _joined
@@ -368,13 +368,19 @@ def _weather(w: Optional[dict]) -> str:
 
 
 def _data_health(dal: Any, config: Any, start: int, end: int) -> list[str]:
-    interval = float(_get(config, "bacnet", "poll", "interval_s", default=120) or 120)
-    expected = max(1, int(round((end - start) / interval)))
+    interval = pollrate.interval(config)
     devs = dal.poll_health_between(start, end)
     if not devs:
         return ["no poll cycles recorded in the window"]
-    cycles = max(int(d.get("cycles") or 0) for d in devs)
-    out = [f"poll cycles recorded: {cycles} of about {expected}"]
+    # counted from a rate change inside the window, which the old rate would make look short
+    c0 = pollrate.counted_from(dal, start, end)
+    expected = max(1, int(round((end - c0) / interval)))
+    counted = devs if c0 == start else dal.poll_health_between(c0, end)
+    cycles = max((int(d.get("cycles") or 0) for d in counted), default=0)
+    out = [f"poll cycles recorded: {cycles} of about {expected}" if c0 == start else
+           f"poll cycles recorded since the poll rate changed to every "
+           f"{pollrate.label(interval)} at {time.strftime('%a %H:%M', time.localtime(c0))}: "
+           f"{cycles} of about {expected}"]
     for d in devs:
         att, ok = int(d.get("reads_attempted") or 0), int(d.get("reads_ok") or 0)
         if att and ok / att < 0.995:

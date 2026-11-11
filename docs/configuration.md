@@ -28,7 +28,7 @@ All settings live in `config/config.yaml`, which the setup wizard writes from
 | `local_address` | `<COLLECTOR_IP>/24` | This computer's address on the BACnet network, with prefix length. Must be filled in. |
 | `device_instance` | `<LOGGER_DEVICE_INSTANCE>` | HVACTrend's own BACnet instance: any unused number up to 4194302. Must be filled in. |
 | `object_name` | `HVACTrend-Logger` | HVACTrend's own BACnet device name |
-| `poll.interval_s` | `120` | How often every logged point is read |
+| `poll.interval_s` | `120` | How often every logged point is read. `60` works too: it doubles the raw rows, so halve `storage.retention.raw_days` to keep the same disk. |
 | `poll.stagger_s` | `5` | Pause between controllers within a cycle |
 | `poll.rpm_batch` | `10` | Points per ReadPropertyMultiple request |
 | `poll.device_budget_s` | `45` | Longest one controller may take per cycle. A slow one cannot hold up the rest. |

@@ -173,3 +173,24 @@ def test_isolated_fan_samples_do_not_stretch_the_detected_day(tmp_path):
     assert mon["start_min"] == 300, mon        # 05:00 — not 02:30
     assert mon["end_min"] <= 1080, mon         # ~18:00 — not 22:15
     dal.close()
+
+
+def test_one_minute_readings_must_cover_the_day_not_just_count_to_the_floor(tmp_path):
+    """At a 1-minute poll the 200-reading floor is 3.3 h. A Tuesday read
+    only 03:00-05:00 and 18:00-20:00 has 240 readings and spans both transition windows, and
+    is still mostly a hole: it must be insufficient, not a schedule starting at 18:00."""
+    dal = _seed(tmp_path / "m.db", role="OCCUPANCY", name="Occupancy Status|dac-3")
+    _day_samples(dal, 20, occ_from=6, occ_to=18)              # a whole Monday
+    rows = []
+    for h0 in (3, 18):
+        for k in range(120):
+            mm = h0 * 60 + k
+            v = 1.0 if 18 * 60 <= mm < 19 * 60 else 2.0
+            rows.append(Sample(point_id=1, ts_utc=_ts(2026, 7, 21, mm // 60, mm % 60),
+                               value_num=v, quality=Quality.GOOD))
+    dal.write_samples(rows)
+    res = detect_schedules(dal, None, now_utc=_ts(2026, 7, 23, 0), localtime=GM)
+    days = res["systems"][0]["days"]
+    assert days["mon"]["start_min"] == 360
+    assert days["tue"]["insufficient"] is True, days["tue"]
+    dal.close()

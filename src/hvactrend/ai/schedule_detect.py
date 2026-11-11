@@ -39,7 +39,9 @@ _DEF = {
     "occupied_fan_pct": 45.0,    # at/above this the unit is clearly running for occupancy
     "freeze_fan_pct": 35.0,      # at/below this it may be cold-weather circulation
     "cold_oat_f": 40.0,          # ... when the outdoor air is this cold
-    "min_samples_per_day": 200,  # ~7 h at a 120 s poll
+    # Counted in 2-MINUTE SLOTS, not readings: ~7 h of a day. At a 1-minute poll 200
+    # readings would be 3.3 h, and a day with the afternoon missing would pass.
+    "min_samples_per_day": 200,
     "cover_from_hour": 4,        # a usable day must have samples by this local hour ...
     "cover_to_hour": 19,         # ... and still be sampling at this one
     "round_to_min": 5,
@@ -232,7 +234,8 @@ def detect_schedules(dal: Any, config: Any = None, *, now_utc: Optional[int] = N
         per_wday: dict[int, list[tuple[int, int]]] = {}
         unocc_wday: dict[int, int] = {}
         for key, vals in per_date.items():
-            if len(vals) < cfg["min_samples_per_day"]:
+            # the 2-minute slots the day's readings cover, whatever the poll rate
+            if len({m // 2 for m, _o, _w in vals}) < cfg["min_samples_per_day"]:
                 continue
             minutes = [m for m, _o, _w in vals]
             if min(minutes) > cfg["cover_from_hour"] * 60 or max(minutes) < cfg["cover_to_hour"] * 60:
