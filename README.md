@@ -15,7 +15,7 @@ boiler enabled but not heating, a controller's own alarms) and sends those to yo
 never writes to a controller: it cannot change anything in your building.
 
 **[⬇ Download the latest release](https://github.com/jamesccupps/HVACTrend/releases/latest)**
-(Windows or Linux, Python 3.11+) · [Try the demo](#try-it-in-a-minute-without-a-bacnet-network) ·
+(Windows or Linux, Python 3.11+) · [Website](https://jamesccupps.github.io/HVACTrend/) · [Try the demo](#try-it-in-a-minute-without-a-bacnet-network) ·
 [Getting started](docs/getting-started.md) · [All releases](https://github.com/jamesccupps/HVACTrend/releases)
 
 ![The trend viewer: two and a half days of discharge air on two air handlers, with the setpoint and the outdoor air. AHU-2 runs about 9 °F warm every afternoon while AHU-1 holds its 55 °F setpoint.](docs/screenshots/trend-viewer.png)
@@ -148,7 +148,7 @@ covered by more than 450 automated tests, with no hardware needed:
 - the viewer;
 - the alarm rules and notifications.
 
-Other buildings will name their points differently. If yours are not recognised (the
+Other buildings will name their points differently. If yours are not recognized (the
 dashboard and the alarm rules rely on it), please open an issue with a few example point names.
 
 ## License
