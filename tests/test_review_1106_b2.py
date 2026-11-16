@@ -252,10 +252,11 @@ def test_rpm_silence_from_an_unknown_device_is_checked_with_one_plain_read(monke
     _s, health = asyncio.run(col._poll_device(app.dead, 9, _pts(25, rpm=None), T0))
     assert app.calls == [(app.dead, "rpm"), (app.dead, "present-value")]
     assert health.method == "no-answer"
-    # a device discovery found refuses RPM is not sent one
+    # a device discovery marked as refusing RPM is still sent one, at most hourly, and is read
+    # grouped when it answers (2026-11-15 review, finding 2: test_review_1115.py)
     app.calls.clear()
     _s, health = asyncio.run(col._poll_device(app.live, 8, _pts(3, rpm=0), T0))
-    assert [c[1] for c in app.calls if c[1] == "rpm"] == [] and health.reads_ok == 3
+    assert [c[1] for c in app.calls if c[1] == "rpm"] == ["rpm"] and health.reads_ok == 3
 
 
 def _two_controllers(tmp_path):

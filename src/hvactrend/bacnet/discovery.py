@@ -354,8 +354,8 @@ async def _read_props(app: ReadOnlyBACnetApplication, address: Any, oid: Any,
             logger.debug("RPM raised on %s (%s); falling back to single reads", oid, exc)
         # A whole-request reject/abort comes back as a RETURNED error object.
         if rows is not None and not _is_error(rows):
-            if device is not None and device.rpm_supported is None:
-                device.rpm_supported = True
+            if device is not None:
+                device.rpm_supported = True        # a grouped answer proves it, whatever came first
             out: dict[str, Any] = {}
             try:
                 for _objid, propid, _idx, value in rows:
@@ -364,7 +364,11 @@ async def _read_props(app: ReadOnlyBACnetApplication, address: Any, oid: Any,
                 return out
             except (TypeError, ValueError) as exc:
                 logger.debug("RPM result unpack failed on %s (%s); single reads", oid, exc)
-        if device is not None:
+        elif device is not None and device.rpm_supported is None and _refuses_service(rows):
+            # Only a device that SAYS it does not do grouped reads is marked so. Any failure
+            # used to mark it, a timed-out or unanswered request included, and the collector
+            # then read that controller one property at a time for good (2026-11-15 review,
+            # finding 2).
             device.rpm_supported = False
 
     # Individual ReadProperty. read_property RETURNS an error object on failure, so
@@ -508,6 +512,15 @@ def _is_error(v: Any) -> bool:
         return True
     return hasattr(v, "errorClass") or type(v).__name__ in (
         "ErrorType", "ErrorPDU", "AbortPDU", "RejectPDU")
+
+
+def _refuses_service(v: Any) -> bool:
+    """True for the reply a device gives to a service it does not do at all: a reject for an
+    unrecognized service. A timeout, a no-response abort, an error, or a reject for any other
+    reason says nothing about whether it does the service (2026-11-15 review, finding 2)."""
+    return (type(v).__name__ == "RejectPDU"
+            and str(getattr(v, "apduAbortRejectReason", "")) in ("unrecognized-service",
+                                                                 "unrecognizedService"))
 
 
 def _no_response(v: Any) -> bool:

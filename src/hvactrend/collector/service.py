@@ -74,6 +74,12 @@ class Collector:
         self._dark: dict[str, list[int]] = {}
         self._dark_cap = max(1, int(900 // max(self._interval_s, 1)))
         self._rpm_ok: set[str] = set()      # devices that answered a grouped read this run
+        # A device discovery marked as refusing grouped reads is still sent one: at its first
+        # cycle of a run, then at most once an hour. When it answers, it is read grouped for
+        # the rest of the run (_rpm_ok). The mark used to be final, and one timed-out request
+        # during a discovery left a controller read one property at a time for good
+        # (2026-11-15 review, finding 2). address -> monotonic time of the last try.
+        self._rpm_retry: dict[str, float] = {}
         # Realtime trends (collector/realtime.py): their own task, started and ended with
         # this one, reading through _poll_device on the same stack.
         self.realtime = Realtime(self)
@@ -330,6 +336,7 @@ class Collector:
         logger.info("poll cycle: %d samples from %d device(s)", total, len(by_device))
 
     _PENDING_MAX = 50_000     # about 60 cycles of the whole building: then the oldest go
+    _RPM_RETRY_S = 3600.0     # how often a device marked as refusing grouped reads is re-asked
 
     def _store(self, samples: list, device_id: Any) -> int:
         """Write a device's samples, with any an earlier cycle could not. A write that fails
@@ -363,7 +370,13 @@ class Collector:
         skipped = 0
         silent = 0                       # points not asked because a request got no reply
         rpm_flag = pts[0].get("rpm_supported") if pts else None
-        use_rpm = rpm_flag is None or bool(rpm_flag)     # discovery found it refuses RPM
+        retry_rpm = (rpm_flag is not None and not rpm_flag and address not in self._rpm_ok
+                     and time.monotonic() - self._rpm_retry.get(address, float("-inf"))
+                     >= self._RPM_RETRY_S)
+        if retry_rpm:
+            self._rpm_retry[address] = time.monotonic()
+        use_rpm = (rpm_flag is None or bool(rpm_flag) or address in self._rpm_ok
+                   or retry_rpm)                         # else discovery found it refuses RPM
         rpm_known = bool(rpm_flag) or address in self._rpm_ok
 
         def over_budget() -> bool:
@@ -392,6 +405,13 @@ class Collector:
                     rows = await self._app.read_property_multiple(address, params)
                 except Exception:  # noqa: BLE001 -- a reply that would not decode, raised
                     rows = None
+                if retry_rpm:
+                    retry_rpm = False
+                    if rows is None or _is_error(rows):
+                        use_rpm = False          # still refused: one at a time, as before
+                    else:
+                        logger.info("device %s (%s) answers grouped reads after all; "
+                                    "reading it grouped", device_id, address)
                 if rpm_known and _no_response(rows):
                     samples += [_sample_from(p, {}, ts) for p in chunk]
                     silent += len(chunk)
