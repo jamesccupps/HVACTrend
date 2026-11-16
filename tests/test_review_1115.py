@@ -103,3 +103,27 @@ def test_a_device_marked_as_refusing_grouped_reads_is_asked_again(monkeypatch):
     app.calls.clear()
     asyncio.run(col._poll_device("192.0.2.11", 9, _pts(25, rpm=0), T0))
     assert app.calls.count("rpm") == 1
+
+
+# ── finding 3: a controller's declared object count is capped ────────────────────────────
+def test_an_absurd_object_count_is_refused_not_read_for_ever():
+    pytest.importorskip("bacpypes3")
+    from bacpypes3.apdu import AbortPDU
+    from hvactrend.bacnet.discovery import MAX_OBJECTS, _read_object_list
+
+    class Huge:
+        reads = 0
+
+        async def read_property(self, address, oid, prop, property_array_index=None):
+            if property_array_index == 0:
+                return 4_000_000_000
+            if property_array_index is None:
+                return AbortPDU()                 # the whole list will not fit: by index
+            Huge.reads += 1
+            return f"analog-value,{property_array_index}"
+
+    stats = {}
+    oids = asyncio.run(_read_object_list(Huge(), "192.0.2.10", "device,1", stats=stats))
+    assert oids == [] and Huge.reads == 0
+    assert stats == {"declared": 4_000_000_000, "listed": 0, "complete": False}
+    assert 50_000 <= MAX_OBJECTS <= 1_000_000

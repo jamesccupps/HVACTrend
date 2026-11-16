@@ -307,6 +307,11 @@ async def _read_object_list(app: ReadOnlyBACnetApplication, address: Any,
                 logger.warning("object-list count unreadable on %s", dev_oid)
                 return oids
             count = int(cnt)
+        if count > MAX_OBJECTS:
+            logger.error("object-list on %s declares %d objects, over the %d ceiling: not read "
+                         "element by element", dev_oid, count, MAX_OBJECTS)
+            st.update(declared=count, listed=0, complete=False)
+            return oids
         for i in range(1, count + 1):
             # ⚠️ The try is PER ELEMENT, not around the loop. A read that RAISES -- a
             # timeout surfacing as an exception rather than as a returned error object --
@@ -512,6 +517,13 @@ def _is_error(v: Any) -> bool:
         return True
     return hasattr(v, "errorClass") or type(v).__name__ in (
         "ErrorType", "ErrorPDU", "AbortPDU", "RejectPDU")
+
+
+# The most objects a controller may declare before its list is read one element at a time.
+# The count is the device's own number, up to four billion; read one by one, a bad or hostile
+# answer kept a discovery or a rescan running for ever, holding the one-sweep lock
+# (2026-11-15 review, finding 3). Ten times the largest real controller.
+MAX_OBJECTS = 100_000
 
 
 def _refuses_service(v: Any) -> bool:
