@@ -127,3 +127,93 @@ def test_an_absurd_object_count_is_refused_not_read_for_ever():
     assert oids == [] and Huge.reads == 0
     assert stats == {"declared": 4_000_000_000, "listed": 0, "complete": False}
     assert 50_000 <= MAX_OBJECTS <= 1_000_000
+
+
+# ── finding 4: realtime reads off the loop, a window for them, four big reads at once ─────
+def test_realtime_readings_are_read_off_the_event_loop(tmp_path):
+    pytest.importorskip("bacpypes3")
+    from fastapi.testclient import TestClient
+    from tests.test_realtime import _app, _insert
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        def on_the_loop(*a, **k):
+            raise AssertionError("realtime readings read on the event loop")
+        app.state.dal.fast_series = on_the_loop
+        now = int(time.time())
+        _insert(tmp_path, "(1, ?, 55.5, NULL, 'good'), (1, ?, 56.0, NULL, 'good')",
+                (now - 10, now - 5))
+        d = c.get(f"/api/realtime/data?ids=1&start={now - 60}&end={now}")
+        assert d.status_code == 200, d.text
+        assert d.json()["series"]["1"] == [[now - 10, 55.5, "good"], [now - 5, 56.0, "good"]]
+        r = c.get(f"/api/realtime/export?ids=1&start={now - 60}&end={now}")
+        assert r.status_code == 200, r.text
+        assert "55.5" in r.text and "56.0" in r.text
+
+
+def test_realtime_readings_are_kept_a_year_unless_config_says(tmp_path):
+    from tests.test_realtime import _plant
+    dal = _plant(tmp_path / "r.db")
+    now = T0
+    old, new = now - 400 * 86400, now - 10 * 86400
+
+    def fill():
+        c = dal._conn
+        c.execute("DELETE FROM fast_samples")
+        c.execute("DELETE FROM fast_runs")
+        c.executemany("INSERT INTO fast_samples VALUES (1, ?, 55.0, NULL, 'good')",
+                      [(old,), (new,)])
+        c.executemany("INSERT INTO fast_runs(id, group_id, point_id, interval_s, started_utc, "
+                      "ends_utc, stopped_utc, stop_reason) VALUES (?, ?, 1, 5, ?, ?, ?, ?)",
+                      [(1, 1, old, old + 60, old + 60, "finished"),    # long over
+                       (2, 2, new, new + 60, new + 60, "finished"),
+                       (3, 3, old, now + 60, None, None)])             # still running
+        c.commit()
+
+    def left():
+        return ([r[0] for r in dal._conn.execute("SELECT ts_utc FROM fast_samples")],
+                [r[0] for r in dal._conn.execute("SELECT id FROM fast_runs ORDER BY id")])
+
+    fill()
+    out = dal.enforce_retention(now, {})                 # absent: a year
+    assert left() == ([new], [2, 3]) and out["fast_samples"] == 1 and out["fast_runs"] == 1
+    fill()
+    dal.enforce_retention(now, {"realtime_days": None})  # null: for ever
+    assert left() == ([old, new], [1, 2, 3])
+    fill()
+    dal.enforce_retention(now, {"realtime_days": 5})     # under the floor: refused
+    assert left() == ([old, new], [1, 2, 3])
+    fill()
+    dal.enforce_retention(now, {"realtime_days": 30})
+    assert left() == ([new], [2, 3])
+    dal.close()
+
+
+def test_big_reads_run_four_at_a_time(tmp_path, monkeypatch):
+    pytest.importorskip("bacpypes3")
+    import threading
+    from fastapi.testclient import TestClient
+    from hvactrend.api import app as app_module
+    from tests.test_realtime import _app
+    lock, now_running, most = threading.Lock(), [0], [0]
+
+    def slow(*a):
+        with lock:
+            now_running[0] += 1
+            most[0] = max(most[0], now_running[0])
+        time.sleep(0.3)
+        with lock:
+            now_running[0] -= 1
+        return {"series": [], "rollup": "raw", "extent": {}}
+
+    monkeypatch.setattr(app_module, "_series_payload", slow)
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        def ask():
+            assert c.post("/api/series", json={"ids": [1], "start": T0 - 3600,
+                                               "end": T0}).status_code == 200
+        threads = [threading.Thread(target=ask) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert most[0] == 4

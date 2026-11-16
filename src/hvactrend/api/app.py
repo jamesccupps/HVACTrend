@@ -513,6 +513,15 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         """bacnet.poll.interval_s: how far apart the raw readings are (pollrate.py)."""
         return _pollrate.interval(getattr(app.state, "config", None))
 
+    # At most four big reads at once (2026-11-15 review, finding 4). /api/series and the
+    # realtime reads each take a worker thread and a connection of their own, up to 400,000
+    # rows a request, and nothing limited how many ran together. The rest wait their turn.
+    read_slots = asyncio.Semaphore(4)
+
+    async def _in_worker(fn: Any, *args: Any) -> Any:
+        async with read_slots:
+            return await asyncio.to_thread(fn, *args)
+
     def _require_auth(authorization: str = "", x_auth_token: str = "") -> None:
         """Gate sensitive mutations. When api.auth.enabled, require a bearer token that
         matches env HVACTREND_UI_TOKEN; otherwise allow (trusted-VLAN default, warned at
@@ -1360,7 +1369,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         shares: it had no clamp and no row budget, raw by default (2026-10-27 review)."""
         if start > end:
             start, end = end, start
-        out = await asyncio.to_thread(
+        out = await _in_worker(
             _series_payload, str(app.state.dal.db_path), [point_id], _ts(start), _ts(end),
             _valid_rollup(rollup), _poll_s())
         if not out["series"]:
@@ -1399,7 +1408,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         dropped = len(unique) - len(ids)
         if start > end:
             start, end = end, start
-        out = await asyncio.to_thread(
+        out = await _in_worker(
             _series_payload, str(app.state.dal.db_path), ids, _ts(start), _ts(end),
             _valid_rollup(payload.get("rollup")), _poll_s())
         return dict(out, dropped=dropped)
@@ -1601,7 +1610,6 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         """Realtime readings: newer than `since` (the live chart's next slice), or from
         `start` to `end` (a past session). Rows are [t, value, quality]; a long window is
         thinned, keeping each stretch's lowest and highest reading."""
-        from ..collector import realtime as _realtime
         pids = _rt_ids(ids)
         now = int(time.time())
         if since is not None:                      # at most the window below, however old
@@ -1614,11 +1622,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             raise HTTPException(status_code=400, detail="a window of at most 8 days")
         dal = app.state.dal
         meta = dal.fast_points(pids)
-        series = {}
-        for pid in pids:
-            rows = [(t, num, q) for t, num, _text, q in dal.fast_series(pid, t0, t1)]
-            series[pid] = _realtime.thin([(t, v if q == "good" else None, q)
-                                          for t, v, q in rows])
+        series = await _in_worker(_realtime_series, str(dal.db_path), pids, t0, t1)
         return {"now": now, "series": series,
                 "meta": {pid: _rt_point(m) for pid, m in meta.items()}}
 
@@ -1638,7 +1642,6 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         2-minute export's layout."""
         from fastapi.responses import Response
 
-        from .. import export as _export
         dal = app.state.dal
         now = int(time.time())
         if group is not None:
@@ -1656,9 +1659,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         meta = dal.fast_points(pids)
         metas = [{"id": p, "name": meta[p].get("name"), "display_name": meta[p].get("display_name"),
                   "system_code": meta[p].get("system_code")} for p in pids if p in meta]
-        text = await asyncio.to_thread(
-            _export.realtime_csv, metas,
-            {m["id"]: dal.fast_series(m["id"], t0, t1) for m in metas})
+        text = await _in_worker(_realtime_csv, str(dal.db_path), metas, t0, t1)
         name = time.strftime("realtime-%Y%m%d-%H%M.csv", time.localtime(t0))
         return Response(text, media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
@@ -1972,6 +1973,37 @@ def _series_payload(db_path: str, ids: list, start: int, end: int,
         # `ext` is read once, above, to clamp the window: a second read was a 34 ms query on
         # every chart load (2026-09-29 audit, A7).
         return {"series": series, "rollup": roll or "raw", "extent": ext}
+    finally:
+        dal.close()
+
+
+def _realtime_series(db_path: str, pids: list, t0: int, t1: int) -> dict:
+    """The readings of GET /api/realtime/data, thinned, in a worker thread on its OWN read-only
+    connection. They were read on the event loop the BACnet stack shares, up to 8 days a
+    point: 138,000 rows at 5 s (2026-11-15 review, finding 4)."""
+    from ..collector import realtime as _realtime
+    from ..storage.sqlite_dal import SQLiteDAL
+    dal = SQLiteDAL(db_path, read_only=True)
+    try:
+        series = {}
+        for pid in pids:
+            rows = [(t, num, q) for t, num, _text, q in dal.fast_series(pid, t0, t1)]
+            series[pid] = _realtime.thin([(t, v if q == "good" else None, q)
+                                          for t, v, q in rows])
+        return series
+    finally:
+        dal.close()
+
+
+def _realtime_csv(db_path: str, metas: list, t0: int, t1: int) -> str:
+    """GET /api/realtime/export's CSV, read AND written in a worker thread. Only the writing
+    was: the readings were read on the loop before the thread started (finding 4)."""
+    from .. import export as _export
+    from ..storage.sqlite_dal import SQLiteDAL
+    dal = SQLiteDAL(db_path, read_only=True)
+    try:
+        return _export.realtime_csv(metas, {m["id"]: dal.fast_series(m["id"], t0, t1)
+                                            for m in metas})
     finally:
         dal.close()
 

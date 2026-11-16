@@ -50,6 +50,7 @@ The keys are `device_systems`, `point_systems`, `sc_dac_map`, `building` and `ta
 | `retention.rollup_1h_days` | `null` | Hourly averages; null = for ever |
 | `retention.poll_health_days` | `30` | Per-controller poll diagnostics |
 | `retention.alerts_days` | `180` | Resolved alerts |
+| `retention.realtime_days` | `365` | The Realtime page's readings and finished runs. Also the default when the key is left out; null = for ever. Floor: 30 |
 | `snapshot_interval_s` | `86400` | A daily zip of `config/` (never `secrets.env`) in `data/snapshots` |
 | `backup.interval_s` | `604800` | A full, verified copy of the database, weekly. 0 = off. |
 | `backup.keep` | `4` | Copies kept. Each is a full database: check the disk. |
@@ -114,7 +115,7 @@ Points to ignore, rules that are not possible here, overrides held on purpose: s
 ## realtime
 
 The Realtime page's caps. Its readings are kept in their own table, apart from the 2-minute
-record.
+record, for `storage.retention.realtime_days` (a year).
 
 | Key | Default | |
 |---|---|---|

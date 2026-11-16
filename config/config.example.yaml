@@ -81,6 +81,7 @@ storage:
     rollup_1h_days: null               # null = keep the hourly averages for ever
     poll_health_days: 30               # per-controller poll diagnostics
     alerts_days: 180                   # resolved alerts
+    realtime_days: 365                 # the Realtime page's readings and finished runs
   maintenance_interval_s: 3600         # build rollups and prune, this often
   snapshot_interval_s: 86400           # daily zip of config/ (never secrets.env); 0 = off
   backup:
@@ -173,8 +174,9 @@ api:
 
 # ── Realtime trends ─────────────────────────────────────────────────────────────────────────
 # The Realtime page reads chosen points every few seconds for a set time, for testing and
-# diagnosing. Its readings are kept, apart from the 2-minute record. The caps protect the
-# controllers, which the building's own system also talks to.
+# diagnosing. Its readings are kept a year (storage.retention.realtime_days), apart from the
+# 2-minute record. The caps protect the controllers, which the building's own system also
+# talks to.
 realtime:
   max_points: 20                       # running at once, whoever started them
   max_per_controller: 10

@@ -1042,6 +1042,7 @@ class SQLiteDAL(DAL):
     # -- rollup_1h_days is 3,650 against raw's 730 -- so a typo in rollup_1h_days deleted
     # the long memory with nothing to stop it. 2026-09-22 audit, L-1.
     MIN_ROLLUP_RETENTION_DAYS = 30
+    DEFAULT_REALTIME_DAYS = 365      # realtime readings, when storage.retention leaves it out
 
     def enforce_retention(self, now_utc: int, policy: Any) -> dict[str, int]:
         """Prune data older than the configured windows. raw_days caps the
@@ -1135,6 +1136,28 @@ class SQLiteDAL(DAL):
             deleted["alerts"] = self._conn.execute(
                 "DELETE FROM alerts WHERE status = 'resolved' "
                 "AND COALESCE(resolved_utc, last_seen_utc, created_utc) < ?",
+                (cut,)).rowcount
+
+        # Realtime readings had no window at all, and anyone on the VLAN can keep 20 points
+        # running: 345,600 rows a day at 5 s (2026-11-15 review, finding 4). A year when the
+        # key is absent; null keeps them for ever; below the rollup floor is refused. Runs
+        # still going are never touched. Per point, through the clustered key.
+        v = policy.get("realtime_days", self.DEFAULT_REALTIME_DAYS) \
+            if hasattr(policy, "get") else self.DEFAULT_REALTIME_DAYS
+        try:
+            d = float(v) if v is not None else None
+        except (TypeError, ValueError):
+            d = None
+        if d is not None and 0 < d < self.MIN_ROLLUP_RETENTION_DAYS:
+            logger.error("retention REFUSED: realtime_days=%s is below the %d-day floor. "
+                         "Nothing was deleted.", d, self.MIN_ROLLUP_RETENTION_DAYS)
+        elif d and d > 0:
+            cut = int(now_utc - d * 86400)
+            deleted["fast_samples"] = self._conn.execute(
+                "DELETE FROM fast_samples WHERE point_id IN (SELECT id FROM points) "
+                "AND ts_utc < ?", (cut,)).rowcount
+            deleted["fast_runs"] = self._conn.execute(
+                "DELETE FROM fast_runs WHERE stopped_utc IS NOT NULL AND stopped_utc < ?",
                 (cut,)).rowcount
         return deleted
 
