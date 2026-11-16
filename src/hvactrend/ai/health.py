@@ -1,4 +1,8 @@
-"""Deterministic building & unit health scoring.
+"""RETIRED (2026-11-15 review, finding 8): part of the old report layer, imported by nothing
+but its tests since the old endpoints went on 2026-10-20. The summary reads rule incidents
+instead (ai/summary.py). Kept with ai/context.py, which imports it.
+
+Deterministic building & unit health scoring.
 
 Every report run scores each system 0-100 (letter grade A-F) and rolls the fleet up
 to a building score — from the SAME deterministic pre-screen signals the LLM sees, so

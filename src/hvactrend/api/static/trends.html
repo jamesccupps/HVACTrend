@@ -870,7 +870,8 @@ async function j(url, opts){
   return r.json();
 }
 function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
-function esc(s){ return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// The apostrophe too, so a value is safe in an attribute quoted either way (2026-11-15 review, finding 7).
+function esc(s){ return (s+'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function natKey(code){ const m=(code||'').match(/^(\D*)(\d+)?/); return [m[1]||'', m[2]?+m[2]:0]; }
 function natCmp(a,b){ const ka=natKey(a), kb=natKey(b); return ka[0]<kb[0]?-1:ka[0]>kb[0]?1:ka[1]-kb[1]; }
 

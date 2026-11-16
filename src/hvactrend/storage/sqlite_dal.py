@@ -1688,7 +1688,8 @@ class SQLiteDAL(DAL):
             "SELECT MAX(created_utc) AS m FROM reports WHERE kind = ?", (kind,)).fetchone()
         return None if r is None or r["m"] is None else int(r["m"])
 
-    # ── health scores (ai/health.py writes; /api/health + status tab read) ─────
+    # ── health scores: RETIRED with ai/health.py (2026-11-15 review, finding 8). Only tests
+    # call these three; /api/health and the status tab's grade went on 2026-10-20.
     def insert_health_scores(self, snapshot: dict, *, report_id: Optional[int],
                              ts_utc: int) -> int:
         """Persist one health snapshot: a building row + one row per system. `detail`

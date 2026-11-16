@@ -201,7 +201,8 @@ async function j(url, opts){
   return r.json();
 }
 function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
-function esc(s){ return (s==null?'':s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// The apostrophe too, so a value is safe in an attribute quoted either way (2026-11-15 review, finding 7).
+function esc(s){ return (s==null?'':s+'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function ts(e){ return e? new Date(e*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
 
 // between-report alerts — active high/critical conditions raised by the continuous check

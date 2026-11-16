@@ -175,7 +175,8 @@ async function j(url, opts) {
   return r.json();
 }
 function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
-function esc(s){ return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// The apostrophe too, so a value is safe in an attribute quoted either way (2026-11-15 review, finding 7).
+function esc(s){ return (s+'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 let sysList = [];
 async function loadSystems() {
@@ -250,7 +251,7 @@ function rowHtml(p){
   return `<tr id="pt${p.id}">
     <td class="log"><input type="checkbox" data-pid="${p.id}" ${p.enabled?'checked':''}></td>
     <td class="name">${esc(p.name||'(unnamed)')}</td>
-    <td class="type">${p.object_type}</td>
+    <td class="type">${esc(p.object_type)}</td>
     <td>${p.object_instance ?? ''}</td>
     <td class="units">${esc(p.units_text||'')}</td>
     <td class="val none" id="v${p.id}">—</td>

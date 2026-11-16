@@ -267,3 +267,65 @@ def test_a_wrong_token_with_an_accent_is_401_not_500(tmp_path, monkeypatch):
                           headers={"X-Auth-Token": token}).status_code
         assert enable("café".encode("utf-8")) == 401
         assert enable("wrong") == 401 and enable("right-token") == 200
+
+
+# ── finding 7: every page's esc() escapes the apostrophe too ─────────────────────────────
+def test_every_page_escapes_the_apostrophe():
+    import re
+    from pathlib import Path
+    static = Path(__file__).resolve().parents[1] / "src" / "hvactrend" / "api" / "static"
+    pages = sorted(static.glob("*.html"))
+    assert len(pages) >= 7
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        lines = [l for l in text.splitlines() if re.match(r"(function esc\(|const esc\s*=)", l)]
+        assert len(lines) <= 1, page.name
+        for line in lines:
+            assert "'&#39;'" in line and ("\"'\"" in line or "\\x27" in line), (page.name, line)
+    index = (static / "index.html").read_text(encoding="utf-8")
+    assert "${p.object_type}" not in index and "${esc(p.object_type)}" in index
+
+
+# ── finding 8: tidy-ups ───────────────────────────────────────────────────────────────────
+def test_the_settings_page_lists_no_section_that_does_not_exist():
+    from hvactrend.config import SETTABLE_DOMAINS
+    assert "alarms" not in SETTABLE_DOMAINS
+    assert {"site", "ai", "weather", "api"} <= SETTABLE_DOMAINS and "bacnet" not in SETTABLE_DOMAINS
+
+
+def test_two_manual_backups_in_one_second_keep_both(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import hvactrend.collector.service as svc
+    from hvactrend.api import app as app_module
+    from tests.test_realtime import _plant
+
+    class _SameSecond:
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+        @staticmethod
+        def strftime(fmt, *a):
+            return "20261115_120000" if fmt == "%Y%m%d_%H%M%S" else time.strftime(fmt, *a)
+
+    def copy(src, dest):                       # stands in for the verified copy
+        open(dest, "wb").write(b"copy")
+        return 1
+
+    monkeypatch.setattr(app_module, "time", _SameSecond())
+    monkeypatch.setattr(svc, "_backup_db_file", copy)
+    db, bk = tmp_path / "a.db", tmp_path / "bk"
+    _plant(db).close()
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(
+        "site: {code: S, name: S}\n"
+        "bacnet:\n  local_address: '<COLLECTOR_IP>/24'\n"
+        "  device_instance: '<LOGGER_DEVICE_INSTANCE>'\n  poll: {interval_s: 120}\n"
+        "  safety: {allow_writes: false, allow_cov: false}\n"
+        f"storage: {{path: '{db.as_posix()}', backup: {{dir: '{bk.as_posix()}', keep: 7}}}}\n",
+        encoding="utf-8")
+    app = app_module.create_app(str(cfg), enable_bacnet=False)
+    with TestClient(app) as c:
+        names = [c.post("/api/backup").json()["file"] for _ in range(2)]
+    stem = "hvactrend.20261115_120000"
+    assert names == [stem + ".db", stem + "_1.db"]
+    assert sorted(p.name for p in bk.glob("*.db")) == sorted(names)

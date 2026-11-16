@@ -166,7 +166,9 @@ SETTABLE_DOMAINS = frozenset({
     #     engine / schema_file   inert anyway -- the DAL is built BEFORE overrides apply
     # Storage is where the record lives. Every knob here is a durability knob, and all of
     # them stay editable in config.yaml, which is a deliberate act with a file to review.
-    "site", "ai", "analysis", "weather", "alarms", "api",
+    # `alarms` was listed and allowed nothing: no section of that name exists, and no code
+    # reads one. Alert settings stay file-only (2026-11-15 review, finding 8).
+    "site", "ai", "analysis", "weather", "api",
     "appearance", "logging",
 })
 # Refused even inside a settable domain: secrets belong in the secrets store, not

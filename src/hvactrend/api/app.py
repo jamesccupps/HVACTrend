@@ -658,8 +658,15 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         bdir = Path(_cfg("storage", "backup", "dir", default="data/backups"))
         keep = int(_cfg("storage", "backup", "keep", default=7) or 0)
         bdir.mkdir(parents=True, exist_ok=True)
-        name = "hvactrend." + time.strftime("%Y%m%d_%H%M%S") + ".db"
-        dest = bdir / name
+        # Two presses in one second used to give one name, and the second archive replaced
+        # the first: suffixed, as the scheduled backup is (2026-11-15 review, finding 8).
+        stem = "hvactrend." + time.strftime("%Y%m%d_%H%M%S")
+        dest = bdir / (stem + ".db")
+        for i in range(1, 100):
+            if not dest.exists():
+                break
+            dest = bdir / f"{stem}_{i}.db"
+        name = dest.name
         # Same contract as the scheduled backup: VERIFY, and never prune behind an archive
         # that has not been verified. This was the only backup path in the program that
         # wrote without checking -- and the only one that deleted a verified archive in the

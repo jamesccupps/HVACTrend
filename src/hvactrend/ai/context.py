@@ -1,4 +1,9 @@
-"""Context builder — assembles what goes to the model BEFORE the call.
+"""RETIRED (2026-11-15 review, finding 8): part of the old report layer, imported by nothing
+but its tests since the old endpoints went on 2026-10-20. The summary reads rule incidents
+instead (ai/summary.py). Kept, not deleted, because its tests also cover live features
+(equipment specs, acknowledged findings).
+
+Context builder — assembles what goes to the model BEFORE the call.
 
 Raw high-frequency logs can't go to an LLM (tokens, cost, noise). The value is in
 what we assemble first: per-point statistical features + hourly shape, the

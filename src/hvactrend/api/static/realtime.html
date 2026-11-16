@@ -200,7 +200,8 @@ async function j(url, opts){
   return r.json();
 }
 function post(url, body){ return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
-function esc(s){ return (s==null?'':s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// The apostrophe too, so a value is safe in an attribute quoted either way (2026-11-15 review, finding 7).
+function esc(s){ return (s==null?'':s+'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 const PALETTE = ['#4aa8ff','#39d353','#f0b429','#ff5f56','#c084fc','#2dd4bf',
                  '#fb923c','#f472b6','#a3e635','#60a5fa','#facc15','#34d399'];
