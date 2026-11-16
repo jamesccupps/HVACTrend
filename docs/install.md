@@ -18,7 +18,9 @@ Windows 10 and 11 are the tested platforms.
      skips it, and so should you.
 2. **Get HVACTrend.** Either `git clone https://github.com/jamesccupps/HVACTrend.git`, or
    *Code → Download ZIP* on GitHub, then unzip.
-   - Put it somewhere permanent, e.g. `C:\HVACTrend`.
+   - Put it somewhere permanent, e.g. `C:\HVACTrend`. If it will run as a service (below), a
+     folder at the root of `C:` is open to every user: the service script refuses it until
+     you run it with `-LockDown` ([security.md](security.md#folder-permissions-windows)).
    - Avoid a folder that OneDrive or Dropbox syncs: the database must not be copied while
      it is being written.
 3. **Double-click `install.bat`.**
@@ -66,6 +68,10 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-service.ps1
 It registers two scheduled tasks that run as SYSTEM:
 - **HVACTrend Server**: at boot, and restarted within a minute if it stops.
 - **HVACTrend Watchdog**: every 5 minutes.
+
+Because they run as SYSTEM, it refuses a folder other users can change. Add `-LockDown` to
+make the folder private first: SYSTEM and Administrators full control, you modify, nobody
+else ([security.md](security.md#folder-permissions-windows)).
 
 Check them in Task Scheduler. Remove both with `scripts\windows\uninstall-service.ps1`;
 your data stays. Run the install script again after moving the folder.

@@ -99,12 +99,30 @@ These are entered on the Settings page, which shows only their last four charact
 
 They are kept in `config/secrets.env`, which:
 - is excluded by `.gitignore`;
-- is excluded from every snapshot and backup archive, which are also scanned for the secret
-  *values* before they are kept;
+- is excluded from every snapshot and backup archive. Snapshots, the archives that hold the
+  config folder, are also scanned for the secret *values* before they are kept; a database
+  backup holds no secrets;
 - is never written to `config.yaml` or the database;
 - accepts only one printable line per value.
 
 Treat the ntfy topic like a password: anyone who knows it can read your notifications.
+
+## Folder permissions (Windows)
+
+The two scheduled tasks run as SYSTEM from the HVACTrend folder: its `.venv\python.exe`, its
+scripts and its packages. Anyone who can change a file there can run code as SYSTEM, and
+anyone who can read it can read `config/secrets.env`.
+
+A folder made at the root of `C:` (such as `C:\HVACTrend`) inherits **modify for every
+signed-in user**. So `scripts\windows\install-service.ps1`:
+- refuses a folder that Everyone, Users, Authenticated Users or INTERACTIVE can change;
+- warns when they can read it;
+- with `-LockDown`, first sets the folder to SYSTEM and Administrators full control and the
+  account running it modify, with nothing for anyone else.
+
+On a computer only you sign in to this changes little; on a shared workstation it is what
+keeps other accounts out. Under your own user profile (`C:\Users\you\...`) the folder is
+already private. The systemd units run as their own `hvactrend` user.
 
 ## What leaves the computer
 

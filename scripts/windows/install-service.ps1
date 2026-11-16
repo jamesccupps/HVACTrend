@@ -12,11 +12,18 @@
   Run as administrator, after install.ps1 and the setup wizard. Run it again after moving
   the folder. Remove both with scripts\windows\uninstall-service.ps1.
 
+  The tasks run as SYSTEM from this folder, so it refuses a folder that every signed-in
+  user can change (one made at the root of C: is). -LockDown fixes that first: SYSTEM and
+  Administrators get full control, the account running this gets modify, and nobody else
+  gets anything, which also keeps config\secrets.env private. See docs/security.md.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\windows\install-service.ps1
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\windows\install-service.ps1 -LockDown
 #>
 #Requires -RunAsAdministrator
-param([string]$Name = "HVACTrend")
+param([string]$Name = "HVACTrend", [switch]$LockDown)
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -24,6 +31,52 @@ $Py = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { throw "No .venv in $Root - run install.ps1 first." }
 if (-not (Test-Path (Join-Path $Root "config\config.yaml"))) {
     throw "No config\config.yaml - run the setup wizard (scripts\configure.py) first."
+}
+
+# Who else can change this folder (2026-11-15 review, finding 1). Both tasks run as SYSTEM
+# from it, so anyone who can replace python.exe, a script or a package here can run code as
+# SYSTEM within five minutes; anyone who can read it can read config\secrets.env.
+$BroadSids = @{ "S-1-1-0" = "Everyone"; "S-1-5-11" = "Authenticated Users";
+                "S-1-5-32-545" = "Users"; "S-1-5-4" = "INTERACTIVE" }
+# write, append, write attributes, delete, change permissions, take ownership, GENERIC_ALL/WRITE
+$WriteBits = 0x500D0156
+
+function Get-BroadAccess([string]$Path, [switch]$Write) {
+    $found = @()
+    foreach ($ace in (Get-Acl -LiteralPath $Path).Access) {
+        if ($ace.AccessControlType -ne "Allow") { continue }
+        try { $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }
+        catch { continue }
+        if (-not $BroadSids.ContainsKey($sid)) { continue }
+        if ($Write -and -not ([int64]$ace.FileSystemRights -band $WriteBits)) { continue }
+        $found += $BroadSids[$sid]
+    }
+    $found | Select-Object -Unique
+}
+
+function Set-PrivateFolder([string]$Path) {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    & icacls $Path /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" `
+        "*${me}:(OI)(CI)M" /remove:g "*S-1-1-0" "*S-1-5-11" "*S-1-5-32-545" "*S-1-5-4" /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls could not set the permissions of $Path (exit $LASTEXITCODE)" }
+    # Everything inside goes back to inheriting from the folder, dropping its own grants.
+    & icacls (Join-Path $Path "*") /reset /T /C /Q | Out-Null
+}
+
+if ($LockDown) {
+    Set-PrivateFolder $Root
+    Write-Host "Permissions of $Root set: SYSTEM and Administrators full, you modify, nobody else."
+}
+$open = @(Get-BroadAccess $Root -Write)
+if ($open.Count) {
+    throw ("$Root can be changed by: $($open -join ', '). The tasks run as SYSTEM from this " +
+           "folder, so any of those accounts could run code as SYSTEM. Run this again with " +
+           "-LockDown, or move HVACTrend to a folder only administrators can change.")
+}
+$readers = @(Get-BroadAccess $Root)
+if ($readers.Count) {
+    Write-Warning ("Every signed-in user can read $Root, config\secrets.env included " +
+                   "($($readers -join ', ')). Run this again with -LockDown to stop that.")
 }
 
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
