@@ -104,7 +104,9 @@ def test_mutating_endpoints_require_a_token_when_auth_is_on(tmp_path, monkeypatc
         assert ok.status_code == 200 and ok.json()["enabled"] is False
         ok2 = c.post("/api/findings/1/status", json={"status": "closed"},
                      headers={"X-Auth-Token": "s3cret-token"})
-        assert ok2.status_code == 200
+        # past the gate: this database has no finding 1, and that is a 404 since the
+        # 2026-11-15 review (finding 6); it used to answer success
+        assert ok2.status_code == 404
 
 
 def test_auth_enabled_without_a_token_fails_CLOSED(tmp_path, monkeypatch):

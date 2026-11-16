@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from collections import defaultdict
@@ -534,7 +535,9 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             raise HTTPException(status_code=503,
                                 detail="api.auth.enabled but HVACTREND_UI_TOKEN is not set")
         sent = authorization[7:] if authorization.lower().startswith("bearer ") else x_auth_token
-        if not hmac.compare_digest(sent, token):
+        # As bytes: compare_digest raises TypeError on a str with a non-ASCII character, so
+        # such a wrong token got a 500 rather than a 401 (2026-11-15 review, finding 6).
+        if not hmac.compare_digest(sent.encode("utf-8"), token.encode("utf-8")):
             raise HTTPException(status_code=401, detail="unauthorized")
 
     @app.get("/api/settings")
@@ -805,7 +808,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
                                     detail=f"{k} must be null or [start_min, end_min]")
             try:
                 a, b = int(v[0]), int(v[1])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):     # OverflowError: Infinity
                 raise HTTPException(status_code=400, detail=f"{k} minutes must be integers")
             if not (0 <= a < b <= 1440):
                 raise HTTPException(status_code=400,
@@ -978,7 +981,10 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     async def after_hours(days: float = 7) -> dict[str, Any]:
         """Units run outside their schedule by an occupancy override (a thermostat's button),
         oldest first (DAL.after_hours_sessions). Local only, like /api/overrides."""
-        return {"days": days, "sessions": _after_hours(max(0.0, min(float(days), 92.0)))}
+        # The answer echoes the days USED: echoing nan or inf made the reply invalid JSON
+        # (2026-11-15 review, finding 6).
+        days = 7.0 if math.isnan(days) else max(0.0, min(float(days), 92.0))
+        return {"days": days, "sessions": _after_hours(days)}
 
     @app.get("/api/overrides")
     async def overrides_now() -> dict[str, Any]:
@@ -1097,7 +1103,8 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
                           x_auth_token: str = Header(default="")) -> dict[str, Any]:
         """Select/deselect a point for logging. Local DB write — NOT a BACnet write."""
         _require_auth(authorization, x_auth_token)   # changes what the plant records
-        app.state.dal.set_point_enabled(point_id, enabled)
+        if not app.state.dal.set_point_enabled(point_id, enabled):
+            raise HTTPException(status_code=404, detail="unknown point")
         return {"point_id": point_id, "enabled": enabled}
 
     # ── live preview reads (the disambiguation tool, plan §9.1) ───────────────
@@ -1670,7 +1677,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         continuous check (deduped, auto-resolved). `status` filters open|resolved."""
         dal = app.state.dal
         return {"open": _live_alerts(),
-                "recent": dal.list_alerts(status=status, limit=limit)}
+                "recent": dal.list_alerts(status=status, limit=_clamp_limit(limit, 1000))}
 
     @app.post("/api/alerts/check")
     async def alerts_check(authorization: str = Header(default=""),
@@ -1718,7 +1725,7 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
 
     @app.get("/api/reports")
     async def reports_list(limit: int = 50) -> dict[str, Any]:
-        return {"reports": app.state.dal.list_reports(limit=limit)}
+        return {"reports": app.state.dal.list_reports(limit=_clamp_limit(limit, 500))}
 
     @app.get("/api/reports/{report_id}")
     async def report_get(report_id: int) -> dict[str, Any]:
@@ -1742,7 +1749,8 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
     async def findings_list(status: str | None = None, severity: str | None = None,
                             system_id: int | None = None, limit: int = 500) -> dict[str, Any]:
         return {"findings": app.state.dal.list_findings(
-            status=status, severity=severity, system_id=system_id, limit=limit)}
+            status=status, severity=severity, system_id=system_id,
+            limit=_clamp_limit(limit, 5000))}
 
     @app.post("/api/findings/{finding_id}/status")
     async def finding_set_status(finding_id: int, payload: dict = Body(default={}),
@@ -1762,7 +1770,8 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             raise HTTPException(status_code=400, detail="note must be a string")
         if note is not None and len(note) > 2000:
             raise HTTPException(status_code=400, detail="note too long (max 2000 chars)")
-        app.state.dal.set_finding_status(finding_id, status, operator_note=note)
+        if not app.state.dal.set_finding_status(finding_id, status, operator_note=note):
+            raise HTTPException(status_code=404, detail="unknown finding")
         return {"finding_id": finding_id, "status": status, "note": note}
 
     # ── operator action log (ranged annotations) ─────────────────────────────
@@ -1785,7 +1794,12 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         whose window it overlaps, which is what makes it temporary rather than the
         always-on per-unit note. Omit `ts_end_utc` for a point-in-time event."""
         _require_auth(authorization, x_auth_token)
-        title = (payload.get("title") or "").strip()
+        # Each field's type is checked: a number for a title, Infinity for a time, or a list
+        # for a point answered 500 (2026-11-15 review, finding 6).
+        title = payload.get("title")
+        if title is not None and not isinstance(title, str):
+            raise HTTPException(status_code=400, detail="title must be text")
+        title = (title or "").strip()
         if not title:
             raise HTTPException(status_code=400, detail="title is required")
         if len(title) > 300:
@@ -1798,16 +1812,21 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
             ts = int(payload.get("ts_utc") or now)
             ts_end = payload.get("ts_end_utc")
             ts_end = int(ts_end) if ts_end not in (None, "") else None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise HTTPException(status_code=400, detail="ts_utc / ts_end_utc must be epoch seconds")
         if ts_end is not None and ts_end <= ts:
             raise HTTPException(status_code=400, detail="ts_end_utc must be after ts_utc")
         sid, pid = payload.get("system_id"), payload.get("point_id")
+        if pid is not None and (isinstance(pid, bool) or not isinstance(pid, int)):
+            raise HTTPException(status_code=400, detail="point_id must be a point's number")
+        author = payload.get("author") or "operator"
+        if not isinstance(author, str) or len(author) > 100:
+            raise HTTPException(status_code=400, detail="author must be text, at most 100 chars")
         if sid is not None and not any(s["id"] == sid for s in app.state.dal.list_systems()):
             raise HTTPException(status_code=404, detail="unknown system")
         aid = app.state.dal.add_annotation(
             ts_utc=ts, ts_end_utc=ts_end, system_id=sid, point_id=pid,
-            title=title, body=body, author=payload.get("author") or "operator")
+            title=title, body=body, author=author)
         return {"id": aid, "ts_utc": ts, "ts_end_utc": ts_end, "title": title,
                 "system_id": sid}
 
@@ -2006,6 +2025,12 @@ def _realtime_csv(db_path: str, metas: list, t0: int, t1: int) -> str:
                                             for m in metas})
     finally:
         dal.close()
+
+
+def _clamp_limit(limit: Any, most: int) -> int:
+    """A list's `limit` between 1 and `most`. It went to SQL as it came, and -1 there means
+    no limit at all (2026-11-15 review, finding 6)."""
+    return max(1, min(int(limit), most))
 
 
 def _schedule_detect_ro(db_path: str, config: Any, days: int) -> dict:

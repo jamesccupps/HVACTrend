@@ -217,3 +217,53 @@ def test_big_reads_run_four_at_a_time(tmp_path, monkeypatch):
         for t in threads:
             t.join()
     assert most[0] == 4
+
+
+# ── finding 6: bad input answers 400 or 404, never 500 ────────────────────────────────────
+TOKEN_ENV = "HVACTREND_UI_TOKEN"
+
+
+def test_bad_input_is_refused_in_words_not_with_a_500(tmp_path):
+    from fastapi.testclient import TestClient
+    from tests.test_realtime import _app
+    app = _app(tmp_path)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        def post(body):
+            return c.post("/api/annotations", content=body,
+                          headers={"Content-Type": "application/json"}).status_code
+        assert post('{"title": 5}') == 400
+        assert post('{"title": "x", "ts_utc": Infinity}') == 400
+        assert post('{"title": "x", "point_id": [1]}') == 400
+        assert post('{"title": "x", "author": {"a": 1}}') == 400
+        assert post('{"title": "x", "point_id": 1, "author": "night shift"}') == 200
+        r = c.put("/api/systems/1/context", content='{"occ_schedule": {"mon": [Infinity, 600]}}',
+                  headers={"Content-Type": "application/json"})
+        assert r.status_code == 400 and "integers" in r.json()["detail"]
+        for q, used in (("nan", 7.0), ("inf", 92.0), ("-3", 0.0), ("30", 30.0)):
+            r = c.get(f"/api/after-hours?days={q}")
+            assert r.status_code == 200 and r.json()["days"] == used, (q, r.text)
+        assert c.post("/api/points/999/enabled", json={"enabled": True}).status_code == 404
+        assert c.post("/api/points/1/enabled", json={"enabled": True}).status_code == 200
+        assert c.post("/api/findings/999/status", json={"status": "closed"}).status_code == 404
+
+        asked = []
+        for name in ("list_reports", "list_alerts", "list_findings"):
+            setattr(app.state.dal, name, lambda *a, _n=name, **k: asked.append((_n, k["limit"])) or [])
+        for path in ("/api/reports", "/api/alerts", "/api/findings"):
+            assert c.get(path + "?limit=-1").status_code == 200
+            assert c.get(path + "?limit=999999").status_code == 200
+        assert asked == [("list_reports", 1), ("list_reports", 500), ("list_alerts", 1),
+                         ("list_alerts", 1000), ("list_findings", 1), ("list_findings", 5000)]
+
+
+def test_a_wrong_token_with_an_accent_is_401_not_500(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from tests.test_realtime import _app
+    monkeypatch.setenv(TOKEN_ENV, "right-token")
+    app = _app(tmp_path, "api: {auth: {enabled: true}}\n")
+    with TestClient(app, raise_server_exceptions=False) as c:
+        def enable(token):
+            return c.post("/api/points/1/enabled", json={"enabled": True},
+                          headers={"X-Auth-Token": token}).status_code
+        assert enable("café".encode("utf-8")) == 401
+        assert enable("wrong") == 401 and enable("right-token") == 200

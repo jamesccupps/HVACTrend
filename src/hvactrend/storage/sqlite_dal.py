@@ -389,9 +389,10 @@ class SQLiteDAL(DAL):
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def set_point_enabled(self, point_id: int, enabled: bool) -> None:
-        self._conn.execute("UPDATE points SET enabled = ? WHERE id = ?",
-                           (1 if enabled else 0, point_id))
+    def set_point_enabled(self, point_id: int, enabled: bool) -> bool:
+        """False when there is no such point."""
+        return self._conn.execute("UPDATE points SET enabled = ? WHERE id = ?",
+                                  (1 if enabled else 0, point_id)).rowcount > 0
 
     def set_point_labels(self, point_id: int, *,
                          display_name: Optional[str] = None,
@@ -1371,19 +1372,19 @@ class SQLiteDAL(DAL):
 
     def set_finding_status(self, finding_id: int, status: str, *,
                            operator_note: Optional[str] = None,
-                           now_utc: Optional[int] = None) -> None:
+                           now_utc: Optional[int] = None) -> bool:
         """Set a finding's status, optionally recording WHY. An acknowledgement with a
         note is the operator saying "this is intentional" — it is rendered back to the
         model as explained rather than silently dropped (see open_findings /
-        confirmed_findings). Passing no note leaves any existing one untouched."""
+        confirmed_findings). Passing no note leaves any existing one untouched. False
+        when there is no such finding."""
         if operator_note is None:
-            self._conn.execute("UPDATE findings SET status=? WHERE id=?",
-                               (status, finding_id))
-            return
-        self._conn.execute(
+            return self._conn.execute("UPDATE findings SET status=? WHERE id=?",
+                                      (status, finding_id)).rowcount > 0
+        return self._conn.execute(
             "UPDATE findings SET status=?, operator_note=?, ack_utc=? WHERE id=?",
             (status, operator_note or None,
-             int(now_utc if now_utc is not None else time.time()), finding_id))
+             int(now_utc if now_utc is not None else time.time()), finding_id)).rowcount > 0
 
     def confirmed_findings(self, *, limit: int = 50) -> list[dict]:
         """Findings the operator ACKNOWLEDGED with a reason — i.e. "yes, I did that".
