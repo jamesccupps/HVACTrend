@@ -25,7 +25,10 @@ from .prescreen import screen
 
 log = logging.getLogger("hvactrend.ai.alerts")
 
-_DEFAULTS = {"enabled": True, "check_interval_s": 300.0, "window_s": 1800,
+# Off unless config says on, as the collector and the alerts banner already read it. With
+# the key left out, POST /api/alerts/check ran the old pre-screen (on the event loop) and wrote
+# alerts nothing then showed or resolved (2026-11-15 review, finding 5).
+_DEFAULTS = {"enabled": False, "check_interval_s": 300.0, "window_s": 1800,
              "min_severity": "high"}
 
 

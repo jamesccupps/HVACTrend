@@ -6,8 +6,9 @@ So rather than depend on a station to report wet-bulb, we compute wet-bulb / dew
 enthalpy ourselves from temperature + RH; any source then yields the same derived set.
 
 Default source is **Open-Meteo** (free, no API key, hourly, includes solar radiation).
-An on-site Tempest could be added behind the same `fetch_*` seam later. The HTTP getter
-is injectable so the parse + psychrometrics are tested without a network call.
+An on-site Tempest station is read through its cloud API instead when configured
+(fetch_tempest_cloud). The HTTP getter is injectable so the parse + psychrometrics are
+tested without a network call.
 
 Read-only: fetches public weather + writes the local `weather` table.
 """

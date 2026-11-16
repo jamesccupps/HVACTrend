@@ -2280,6 +2280,6 @@ def _object_json(o: Any) -> dict[str, Any]:
 
 
 def run() -> None:  # pragma: no cover - manual entry point
-    """Dev entry point: uvicorn serves create_app() on 0.0.0.0:8000."""
+    """Dev entry point: uvicorn serves create_app() on 127.0.0.1:8000 (this computer only)."""
     import uvicorn
     uvicorn.run("hvactrend.api.app:create_app", factory=True, host="127.0.0.1", port=8000)

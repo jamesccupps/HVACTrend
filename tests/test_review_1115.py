@@ -329,3 +329,14 @@ def test_two_manual_backups_in_one_second_keep_both(tmp_path, monkeypatch):
     stem = "hvactrend.20261115_120000"
     assert names == [stem + ".db", stem + "_1.db"]
     assert sorted(p.name for p in bk.glob("*.db")) == sorted(names)
+
+
+# ── finding 5: the old pre-screen is off unless config turns it on ───────────────────────
+def test_the_old_prescreen_is_off_when_config_leaves_it_out(tmp_path):
+    from hvactrend.ai.alerts import _alert_cfg, evaluate_alerts
+    from tests.test_realtime import _plant
+    assert _alert_cfg({})["enabled"] is False and _alert_cfg(None)["enabled"] is False
+    assert _alert_cfg({"alerts": {"enabled": True}})["enabled"] is True
+    dal = _plant(tmp_path / "a.db")
+    assert evaluate_alerts(dal, {}, T0) == {"enabled": False, "raised": 0, "resolved": 0, "open": 0}
+    dal.close()
