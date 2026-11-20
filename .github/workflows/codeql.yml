@@ -1,0 +1,49 @@
+name: CodeQL
+
+# GitHub's code scanning: looks for security bugs in the Python, the pages' JavaScript and
+# these workflows. Results go to Security -> Code scanning. Nothing here builds, pushes or
+# publishes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"   # weekly, so new queries run against unchanged code too
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload the results to code scanning
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Python and the viewer's JavaScript are interpreted, and so are the workflows:
+        # nothing to compile, so CodeQL reads the source as it is.
+        language: [python, javascript-typescript, actions]
+
+    steps:
+      # Pinned by commit SHA, not tag: tags are mutable. Dependabot keeps them current.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: "/language:${{ matrix.language }}"
