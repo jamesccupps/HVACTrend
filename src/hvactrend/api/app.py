@@ -770,10 +770,15 @@ def create_app(config_path: str = _DEFAULT_CONFIG, *, enable_bacnet: bool = True
         if ("/" in name or "\\" in name or not name.startswith("hvactrend.")
                 or not name.endswith(".db")):
             raise HTTPException(status_code=400, detail="bad backup name")
-        f = Path(_cfg("storage", "backup", "dir", default="data/backups")) / name
-        if not f.exists():
+        # Serve only a file from the backup folder's own listing: the path on disk comes from
+        # the folder, never from the request. A name that only looks right, such as an NTFS
+        # stream "hvactrend.a.db:x.db", matches nothing (CodeQL py/path-injection).
+        bdir = Path(_cfg("storage", "backup", "dir", default="data/backups"))
+        found = {f.name: f for f in bdir.glob("hvactrend.*.db")} if bdir.exists() else {}
+        f = found.get(name)
+        if f is None:
             raise HTTPException(status_code=404, detail="not found")
-        return FileResponse(str(f), filename=name, media_type="application/octet-stream")
+        return FileResponse(str(f), filename=f.name, media_type="application/octet-stream")
 
     @app.post("/api/weather/refresh")
     async def weather_refresh(authorization: str = Header(default=""),
